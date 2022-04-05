@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+"""
+Run a parilut prototype
+"""
+
+import argparse, sys, pathlib
+
+from parilut import parilut
+
+###############################################################################
+def parse_command_line(args, description):
+###############################################################################
+    parser = argparse.ArgumentParser(
+        usage="""\n{0} <rows> <cols> <non-zero-pct> [--verbose]
+OR
+{0} --help
+
+\033[1mEXAMPLES:\033[0m
+    \033[1;32m# Run parilut on a 30x40 matrix with 20% non-zero entries \033[0m
+    > {0} 30 40 20
+""".format(pathlib.Path(args[0]).name),
+        description=description,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    parser.add_argument("rows", type=int, help="The number of rows")
+
+    parser.add_argument("cols", type=int, help="The number of cols")
+
+    parser.add_argument("pct_nzero", type=int, help="The percent of non-zero entries as an integer 0-100")
+
+    return parser.parse_args(args[1:])
+
+###############################################################################
+def _main_func(description):
+###############################################################################
+    parilut(**vars(parse_command_line(sys.argv, description)))
+
+###############################################################################
+
+if (__name__ == "__main__"):
+    _main_func(__doc__)
