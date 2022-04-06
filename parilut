@@ -28,7 +28,7 @@ OR
 
     parser.add_argument("cols", type=int, help="The number of cols")
 
-    parser.add_argument("pct_nzero", type=int, help="The percent of non-zero entries as an integer 0-100")
+    parser.add_argument("pct_nz", type=int, help="The percent of non-zero entries as an integer 0-100")
 
     return parser.parse_args(args[1:])
 
