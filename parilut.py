@@ -16,13 +16,12 @@ def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
 class SparseMatrix(object):
 ###############################################################################
     """
-    A 2D uncompressed sparse matrix
+    A 2D uncompressed sparse matrix, row major, implemented as a list of lists
     """
 
     ###########################################################################
     def __init__(self, rows, cols, pct_nz=0):
     ###########################################################################
-        # row-major
         self._matrix = [list() for _ in range(rows)]
 
         for row in self:
@@ -51,7 +50,7 @@ class SparseMatrix(object):
     ###########################################################################
 
     ###########################################################################
-    def ncols(self): return len(self._matrix[0])
+    def ncols(self): return 0 if self.nrows() == 0 else len(self._matrix[0])
     ###########################################################################
 
     ###########################################################################
@@ -75,6 +74,23 @@ class SparseMatrix(object):
 
         return True
 
+    ###########################################################################
+    def __mul__(self, rhs):
+    ###########################################################################
+        expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
+
+        result = SparseMatrix(self.nrows(), rhs.ncols())
+
+        for i in range(self.nrows()):
+            for j in range(rhs.ncols()):
+                curr_sum = 0.0
+                for k in range(self.ncols()):
+                    curr_sum += (self[i][k] * rhs[k][j])
+
+                result[i][j] = curr_sum
+
+        return result
+
 ###############################################################################
 class CSR(object):
 ###############################################################################
@@ -87,7 +103,7 @@ class CSR(object):
 
         self._values   = []
         self._csr_cols = []
-        self._csr_rows = []
+        self._csr_rows = [0]
 
         nnz = 0
         for row in src_matrix:
@@ -105,12 +121,88 @@ class CSR(object):
         return str(self.uncompress())
 
     ###########################################################################
+    def nrows(self): return self._nrows
+    ###########################################################################
+
+    ###########################################################################
+    def ncols(self): return self._ncols
+    ###########################################################################
+
+    ###########################################################################
+    def spgemm_insert_row2(self, cols, a, b, row_idx):
+    ###########################################################################
+        for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
+            a_col = a._csr_cols[a_nz]
+            b_row = a_col
+            cols.update(b._csr_cols[b._csr_rows[b_row]:b._csr_rows[b_row+1]])
+
+    ###########################################################################
+    def spgemm_accumulate_row2(self, cols, a, b, scale, row_idx):
+    ###########################################################################
+        for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
+            a_col = a._csr_cols[a_nz]
+            a_val = a._values[a_nz]
+            b_row = a_col
+            for b_nz in range(b._csr_rows[b_row], b._csr_rows[b_row+1]):
+                b_col = b._csr_cols[b_nz]
+                b_val = b._values[b_nz]
+                if b_col in cols:
+                    cols[b_col] += scale * a_val * b_val
+                else:
+                    cols[b_col] = scale * a_val * b_val
+
+    ###########################################################################
+    def __mul__(self, rhs):
+    ###########################################################################
+        expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
+
+        # Cheesy way to create an empty CSR
+        result = CSR(SparseMatrix(0, 0))
+
+        result._nrows = self.nrows()
+        result._ncols = rhs.ncols()
+
+        # first sweep: count nnz for each row
+        for lhs_row in range(self.nrows()):
+            local_col_idxs = set()
+            self.spgemm_insert_row2(local_col_idxs, self, rhs, lhs_row)
+            result._csr_rows.append(len(local_col_idxs))
+
+        # build row pointers
+        curr_sum = 0
+        for idx, nnz in enumerate(result._csr_rows):
+            result._csr_rows[idx] = curr_sum
+            curr_sum += nnz
+
+        # second sweep: accumulate non-zeros
+        result._csr_cols = [0] * curr_sum
+        result._values   = [0] * curr_sum
+
+        local_row_nzs = {}
+        for lhs_row in range(self.nrows()):
+            local_row_nzs.clear()
+            self.spgemm_accumulate_row2(local_row_nzs, self, rhs, 1.0, lhs_row)
+            # store result
+            c_nz = result._csr_rows[lhs_row]
+            for k, v in local_row_nzs.items():
+                result._csr_cols[c_nz] = k
+                result._values[c_nz] = v
+                c_nz += 1
+
+        # Debug checks
+        uself, urhs = self.uncompress(), rhs.uncompress()
+        uresult = uself * urhs
+        expect(uresult == result.uncompress(), "CSR dot prod does not work")
+
+        return result
+
+    ###########################################################################
     def uncompress(self):
     ###########################################################################
         result = SparseMatrix(self._nrows, self._ncols)
 
         prev = 0
-        for row_idx, val in enumerate(self._csr_rows):
+        for row_idx, val in enumerate(self._csr_rows[1:]):
             active_cols = self._csr_cols[prev:val]
             idx = prev
             for col in range(self._ncols):
@@ -123,30 +215,43 @@ class CSR(object):
         return result
 
 ###############################################################################
-def parilut_init(A):
+class PARILUT(object):
 ###############################################################################
-    rows = A.nrows()
-    cols = A.ncols()
 
-    L = SparseMatrix(rows, cols)
-    U = SparseMatrix(rows, cols)
+    ###########################################################################
+    def __init__(self, A):
+    ###########################################################################
+        self._A = A
 
-    for row in range(rows):
-        for col in range(cols):
-            aval = A[row][col]
-            if aval > 0.0:
-                if row >= col:
-                    L[row][col] = aval
-                if row <= col:
-                    U[row][col] = aval
+        rows = A.nrows()
+        cols = A.ncols()
 
-    return CSR(A), CSR(L), CSR(U)
+        expect(rows == cols, "PARILUT matrix must be square")
 
-###############################################################################
-def parilut_main(A, L_csr, U_csr):
-###############################################################################
-    # Identify candidate locations
-    pass
+        L = SparseMatrix(rows, cols)
+        U = SparseMatrix(rows, cols)
+
+        # A bit inefficient. It would be more inefficient to use A_csr to make the
+        # L and U csrs, but we don't care about efficiency here.
+        for row in range(rows):
+            for col in range(cols):
+                aval = A[row][col]
+                if aval > 0.0:
+                    if row >= col:
+                        L[row][col] = aval
+                    if row <= col:
+                        U[row][col] = aval
+
+        self._A_csr, self._L_csr, self._U_csr = CSR(A), CSR(L), CSR(U)
+
+        expect(self._A == self._A_csr.uncompress(), "CSR compression does not work")
+
+    ###########################################################################
+    def main(self):
+    ###########################################################################
+        converged = False
+        while not converged:
+            LU = self._L_csr * self._U_csr
 
 ###############################################################################
 def parilut(rows, cols, pct_nz):
@@ -157,9 +262,7 @@ def parilut(rows, cols, pct_nz):
     expect(pct_nz > 0 and pct_nz <= 100, f"Bad pct_nz {pct_nz}")
 
     A = SparseMatrix(rows, cols, pct_nz)
-    print(A)
-    A_csr, L_csr, U_csr  = parilut_init(A)
-    print(A_csr)
-    expect(A == A_csr.uncompress(), "Something is wrong")
 
-    parilut_main(A, L_csr, U_csr)
+    pilut = PARILUT(A)
+
+    pilut.main()
