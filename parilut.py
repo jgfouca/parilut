@@ -193,7 +193,7 @@ class CSR(object):
             self._spgemm_accumulate_row2(local_row_nzs, self, rhs, 1.0, lhs_row)
             # store result
             c_nz = result._csr_rows[lhs_row]
-            for k, v in local_row_nzs.items():
+            for k, v in sorted(local_row_nzs.items()):
                 result._csr_cols[c_nz] = k
                 result._values[c_nz] = v
                 c_nz += 1
@@ -201,20 +201,7 @@ class CSR(object):
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
         uresult = uself * urhs
-        curesult = CSR(uresult)
-        #expect(uresult == result.uncompress(), "CSR dot prod does not work")
-        if uresult != result.uncompress():
-            print("lhs:")
-            print(self)
-            print("rhs:")
-            print(rhs)
-            print("uresult:")
-            print(uresult)
-            print("result:")
-            print(result)
-            print(f"curesult csr_rows = {curesult._csr_rows}")
-            print(f"  result csr_rows = {result._csr_rows}")
-            expect(False, "end")
+        expect(uresult == result.uncompress(), "CSR dot prod does not work")
 
         return result
 
