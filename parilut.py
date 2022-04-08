@@ -129,20 +129,22 @@ class CSR(object):
     ###########################################################################
 
     ###########################################################################
-    def spgemm_insert_row2(self, cols, a, b, row_idx):
+    def _spgemm_insert_row2(self, cols, a, b, row_idx):
     ###########################################################################
+        """
+        """
         for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
-            a_col = a._csr_cols[a_nz]
-            b_row = a_col
+            b_row = a._csr_cols[a_nz]
             cols.update(b._csr_cols[b._csr_rows[b_row]:b._csr_rows[b_row+1]])
 
     ###########################################################################
-    def spgemm_accumulate_row2(self, cols, a, b, scale, row_idx):
+    def _spgemm_accumulate_row2(self, cols, a, b, scale, row_idx):
     ###########################################################################
+        """
+        """
         for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
-            a_col = a._csr_cols[a_nz]
+            b_row = a._csr_cols[a_nz]
             a_val = a._values[a_nz]
-            b_row = a_col
             for b_nz in range(b._csr_rows[b_row], b._csr_rows[b_row+1]):
                 b_col = b._csr_cols[b_nz]
                 b_val = b._values[b_nz]
@@ -154,10 +156,14 @@ class CSR(object):
     ###########################################################################
     def __mul__(self, rhs):
     ###########################################################################
+        """
+        Sparse general matrix-matrix multiplication (spgemm)
+        """
         expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
 
         # Cheesy way to create an empty CSR
         result = CSR(SparseMatrix(0, 0))
+        result._csr_rows = []
 
         result._nrows = self.nrows()
         result._ncols = rhs.ncols()
@@ -165,7 +171,7 @@ class CSR(object):
         # first sweep: count nnz for each row
         for lhs_row in range(self.nrows()):
             local_col_idxs = set()
-            self.spgemm_insert_row2(local_col_idxs, self, rhs, lhs_row)
+            self._spgemm_insert_row2(local_col_idxs, self, rhs, lhs_row)
             result._csr_rows.append(len(local_col_idxs))
 
         # build row pointers
@@ -181,7 +187,7 @@ class CSR(object):
         local_row_nzs = {}
         for lhs_row in range(self.nrows()):
             local_row_nzs.clear()
-            self.spgemm_accumulate_row2(local_row_nzs, self, rhs, 1.0, lhs_row)
+            self._spgemm_accumulate_row2(local_row_nzs, self, rhs, 1.0, lhs_row)
             # store result
             c_nz = result._csr_rows[lhs_row]
             for k, v in local_row_nzs.items():
@@ -250,8 +256,12 @@ class PARILUT(object):
     def main(self):
     ###########################################################################
         converged = False
+        it = 0
         while not converged:
             LU = self._L_csr * self._U_csr
+            it += 1
+            if it > 10:
+                converged = True
 
 ###############################################################################
 def parilut(rows, cols, pct_nz):
