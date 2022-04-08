@@ -1,5 +1,5 @@
 
-import random
+import random, sys
 
 ###############################################################################
 def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
@@ -75,6 +75,20 @@ class SparseMatrix(object):
         return True
 
     ###########################################################################
+    def __add__(self, rhs):
+    ###########################################################################
+        expect(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
+        expect(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
+
+        result = SparseMatrix(self.nrows(), self.ncols())
+
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                result[i][j] = self[i][j] + rhs[i][j]
+
+        return result
+
+    ###########################################################################
     def __mul__(self, rhs):
     ###########################################################################
         expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
@@ -129,10 +143,67 @@ class CSR(object):
     ###########################################################################
 
     ###########################################################################
-    def _spgemm_insert_row2(self, cols, a, b, row_idx):
+    def __add__(self, rhs):
     ###########################################################################
         """
+        Sparse general matrix-matrix addition (spgeam)
         """
+        expect(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
+        expect(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
+
+        # Cheesy way to create an empty CSR
+        result = CSR(SparseMatrix(0, 0))
+        result._csr_rows = []
+
+        result._nrows = self.nrows()
+        result._ncols = rhs.ncols()
+
+        for row_idx in range(self.nrows()):
+            a_begin = self._csr_rows[row_idx]
+            a_end   = self._csr_rows[row_idx+1]
+            b_begin = rhs._csr_rows[row_idx]
+            b_end   = rhs._csr_rows[row_idx+1]
+            tot     = (a_end - a_begin) + (b_end - b_begin)
+
+            skip = False
+            result._csr_rows.append(tot)
+            for _ in range(tot):
+                if skip:
+                    skip = False
+                    continue
+
+                a_col = self._csr_cols[a_begin] if a_begin < a_end else sys.maxsize
+                a_val = self._values[a_begin]   if a_begin < a_end else 0.0
+                b_col = rhs._csr_cols[b_begin]  if b_begin < b_end else sys.maxsize
+                b_val = rhs._values[b_begin]    if b_begin < b_end else 0.0
+
+                col = min(a_col, b_col)
+                result._csr_cols.append(col)
+                skip = col == a_col and col == b_col
+                result._csr_rows[-1] -= skip
+                a_begin += col == a_col
+                b_begin += col == b_col
+                result._values.append( (a_val if col == a_col else 0.0) + (b_val if col == b_col else 0.0) )
+
+        # build row pointers
+        curr_sum = 0
+        for idx, nnz in enumerate(result._csr_rows):
+            result._csr_rows[idx] = curr_sum
+            curr_sum += nnz
+
+        result._csr_rows.append(curr_sum)
+
+        # Debug checks
+        uself, urhs = self.uncompress(), rhs.uncompress()
+        uresult = uself + urhs
+        curesult = CSR(uresult)
+        expect(uresult == result.uncompress(), "CSR addition does not work")
+
+        return result
+
+    ###########################################################################
+    def _spgemm_insert_row2(self, cols, a, b, row_idx):
+    ###########################################################################
         for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
             b_row = a._csr_cols[a_nz]
             cols.update(b._csr_cols[b._csr_rows[b_row]:b._csr_rows[b_row+1]])
@@ -140,8 +211,6 @@ class CSR(object):
     ###########################################################################
     def _spgemm_accumulate_row2(self, cols, a, b, scale, row_idx):
     ###########################################################################
-        """
-        """
         for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
             b_row = a._csr_cols[a_nz]
             a_val = a._values[a_nz]
@@ -256,11 +325,24 @@ class PARILUT(object):
         expect(self._A == self._A_csr.uncompress(), "CSR compression does not work")
 
     ###########################################################################
+    def _add_candidates(self, lu):
+    ###########################################################################
+        """
+        Adds new entries from the sparsity pattern of A - L * U
+        to L and U, where new values are chosen based on the residual
+        value divided by the corresponding diagonal entry.
+        """
+        lua = lu + self._A_csr
+
+    ###########################################################################
     def main(self):
     ###########################################################################
         converged = False
         while not converged:
             LU = self._L_csr * self._U_csr
+
+            self._add_candidates(LU)
+
             converged = True
 
 ###############################################################################
