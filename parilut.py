@@ -143,20 +143,10 @@ class CSR(object):
     ###########################################################################
 
     ###########################################################################
-    def __add__(self, rhs):
+    def abstract_spgeam(self, rhs, begin_row_cb, entry_cb):
     ###########################################################################
-        """
-        Sparse general matrix-matrix addition (spgeam)
-        """
         expect(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
         expect(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
-
-        # Cheesy way to create an empty CSR
-        result = CSR(SparseMatrix(0, 0))
-        result._csr_rows = []
-
-        result._nrows = self.nrows()
-        result._ncols = rhs.ncols()
 
         for row_idx in range(self.nrows()):
             a_begin = self._csr_rows[row_idx]
@@ -165,8 +155,9 @@ class CSR(object):
             b_end   = rhs._csr_rows[row_idx+1]
             tot     = (a_end - a_begin) + (b_end - b_begin)
 
+            local_data = begin_row_cb(row_idx)
+
             skip = False
-            result._csr_rows.append(tot)
             for _ in range(tot):
                 if skip:
                     skip = False
@@ -177,21 +168,37 @@ class CSR(object):
                 b_col = rhs._csr_cols[b_begin]  if b_begin < b_end else sys.maxsize
                 b_val = rhs._values[b_begin]    if b_begin < b_end else 0.0
 
-                col = min(a_col, b_col)
-                result._csr_cols.append(col)
-                skip = col == a_col and col == b_col
-                result._csr_rows[-1] -= skip
-                a_begin += col == a_col
-                b_begin += col == b_col
-                result._values.append( (a_val if col == a_col else 0.0) + (b_val if col == b_col else 0.0) )
+                col_idx = min(a_col, b_col)
+                skip = col_idx == a_col and col_idx == b_col
+                a_begin += col_idx == a_col
+                b_begin += col_idx == b_col
+                entry_cb(row_idx, col_idx,
+                         (a_val if col_idx == a_col else 0.0), (b_val if col_idx == b_col else 0.0),
+                         local_data)
 
-        # build row pointers
-        curr_sum = 0
-        for idx, nnz in enumerate(result._csr_rows):
-            result._csr_rows[idx] = curr_sum
-            curr_sum += nnz
+    ###########################################################################
+    def __add__(self, rhs):
+    ###########################################################################
+        """
+        Sparse general matrix-matrix addition (spgeam)
+        """
+        # Cheesy way to create an empty CSR
+        result = CSR(SparseMatrix(0, 0))
+        result._csr_rows = []
 
-        result._csr_rows.append(curr_sum)
+        result._nrows = self.nrows()
+        result._ncols = 0
+
+        begin_row_cb = lambda row_idx : result._csr_rows.append(result._ncols)
+        def entry_cb(row_idx, col_idx, a_val, b_val, _):
+            result._ncols += 1
+            result._csr_cols.append(col_idx)
+            result._values.append(a_val + b_val)
+
+        self.abstract_spgeam(rhs, begin_row_cb, entry_cb)
+
+        result._csr_rows.append(result._ncols)
+        result._ncols = self.ncols()
 
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
@@ -333,6 +340,7 @@ class PARILUT(object):
         value divided by the corresponding diagonal entry.
         """
         lua = lu + self._A_csr
+
 
     ###########################################################################
     def main(self):
