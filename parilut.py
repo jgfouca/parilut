@@ -180,6 +180,9 @@ class CSR(object):
             result._csr_rows[idx] = curr_sum
             curr_sum += nnz
 
+        result._csr_rows.append(curr_sum)
+        expect(len(result._csr_rows) == self.nrows() + 1, "Bad csr_rows")
+
         # second sweep: accumulate non-zeros
         result._csr_cols = [0] * curr_sum
         result._values   = [0] * curr_sum
@@ -198,7 +201,20 @@ class CSR(object):
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
         uresult = uself * urhs
-        expect(uresult == result.uncompress(), "CSR dot prod does not work")
+        curesult = CSR(uresult)
+        #expect(uresult == result.uncompress(), "CSR dot prod does not work")
+        if uresult != result.uncompress():
+            print("lhs:")
+            print(self)
+            print("rhs:")
+            print(rhs)
+            print("uresult:")
+            print(uresult)
+            print("result:")
+            print(result)
+            print(f"curesult csr_rows = {curesult._csr_rows}")
+            print(f"  result csr_rows = {result._csr_rows}")
+            expect(False, "end")
 
         return result
 
@@ -256,12 +272,9 @@ class PARILUT(object):
     def main(self):
     ###########################################################################
         converged = False
-        it = 0
         while not converged:
             LU = self._L_csr * self._U_csr
-            it += 1
-            if it > 10:
-                converged = True
+            converged = True
 
 ###############################################################################
 def parilut(rows, cols, pct_nz):
