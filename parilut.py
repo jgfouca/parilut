@@ -105,6 +105,19 @@ class SparseMatrix(object):
 
         return result
 
+    ###########################################################################
+    def make_triangular(self, lower=True):
+    ###########################################################################
+        result = SparseMatrix(self.nrows(), self.ncols())
+
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                if (lower and j <= i) or \
+                   (not lower and j >= i):
+                    result[i][j] = self[i][j]
+
+        return result
+
 ###############################################################################
 class CSR(object):
 ###############################################################################
@@ -141,6 +154,44 @@ class CSR(object):
     ###########################################################################
     def ncols(self): return self._ncols
     ###########################################################################
+
+    ###########################################################################
+    def __eq__(self, rhs):
+    ###########################################################################
+        if self.nrows() != rhs.nrows() or self.ncols() != rhs.ncols():
+            return False
+
+        if (self._csr_rows != rhs._csr_rows) or \
+           (self._csr_cols != rhs._csr_cols) or \
+           (self._values   != rhs._values):
+            return False
+
+        return True
+
+    ###########################################################################
+    def make_triangular(self, lower=True):
+    ###########################################################################
+        result = CSR(SparseMatrix(0, 0))
+        result._nrows = self.nrows()
+        result._ncols = self.ncols()
+
+        prev_row_idx = 0
+        nnz_count = 0
+        nnz_skip = 0
+        for row_idx, row_nnz_idx in enumerate(self._csr_rows[1:]):
+            for col_idx in self._csr_cols[prev_row_idx:row_nnz_idx]:
+                if (lower and col_idx <= row_idx) or \
+                    (not lower and col_idx >= row_idx):
+                    result._csr_cols.append(col_idx)
+                    result._values.append(self._values[nnz_count + nnz_skip])
+                    nnz_count += 1
+                else:
+                    nnz_skip += 1
+
+            prev_row_idx = row_nnz_idx
+            result._csr_rows.append(nnz_count)
+
+        return result
 
     ###########################################################################
     def abstract_spgeam(self, rhs, begin_row_cb, entry_cb):
@@ -306,30 +357,16 @@ class PARILUT(object):
     ###########################################################################
     def __init__(self, A):
     ###########################################################################
-        self._A = A
+        expect(A.nrows() == A.ncols(), "PARILUT matrix must be square")
 
-        rows = A.nrows()
-        cols = A.ncols()
-
-        expect(rows == cols, "PARILUT matrix must be square")
-
-        L = SparseMatrix(rows, cols)
-        U = SparseMatrix(rows, cols)
-
-        # A bit inefficient. It would be more inefficient to use A_csr to make the
-        # L and U csrs, but we don't care about efficiency here.
-        for row in range(rows):
-            for col in range(cols):
-                aval = A[row][col]
-                if aval > 0.0:
-                    if row >= col:
-                        L[row][col] = aval
-                    if row <= col:
-                        U[row][col] = aval
-
-        self._A_csr, self._L_csr, self._U_csr = CSR(A), CSR(L), CSR(U)
+        self._A     = A
+        self._A_csr = CSR(A)
+        self._L_csr = self._A_csr.make_triangular()
+        self._U_csr = self._A_csr.make_triangular(lower=False)
 
         expect(self._A == self._A_csr.uncompress(), "CSR compression does not work")
+        expect(self._L_csr.uncompress() == self._A.make_triangular(), "CSR lower tri does not work")
+        expect(self._U_csr.uncompress() == self._A.make_triangular(lower=False), "CSR lower tri does not work")
 
     ###########################################################################
     def _add_candidates(self, lu):
@@ -340,7 +377,22 @@ class PARILUT(object):
         value divided by the corresponding diagonal entry.
         """
         lua = lu + self._A_csr
+        #     abstract_spgeam(
+        # a, lu,
+        # [&](IndexType row) {
+        #     l_new_row_ptrs[row] = l_nnz;
+        #     u_new_row_ptrs[row] = u_nnz;
+        #     return 0;
+        # },
+        # [&](IndexType row, IndexType col, ValueType, ValueType, int) {
+        #     l_nnz += col <= row;
+        #     u_nnz += col >= row;
+        # },
 
+        #l_new = CSR(SparseMatrix(self._A_csr.nrows(), self._A_csr.ncols))
+
+
+        # self._A_csr.abstract_spgeam(lu,
 
     ###########################################################################
     def main(self):
