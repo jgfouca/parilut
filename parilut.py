@@ -1,5 +1,6 @@
 
 import random, sys
+from dataclasses import dataclass
 
 ###############################################################################
 def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
@@ -11,6 +12,16 @@ def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
     if not condition:
         msg = error_prefix + " " + error_msg
         raise exc_type(msg)
+
+###############################################################################
+def convert_counts_to_sum(the_list):
+###############################################################################
+    curr_sum = 0
+    for idx, count in enumerate(the_list):
+        the_list[idx] = curr_sum
+        curr_sum += count
+
+    return curr_sum
 
 ###############################################################################
 class SparseMatrix(object):
@@ -156,6 +167,18 @@ class CSR(object):
     ###########################################################################
 
     ###########################################################################
+    def iter_cols_in_row(self, row_idx):
+    ###########################################################################
+        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        return iter(self._csr_cols[self._csr_rows[row_idx]:self._csr_rows[row_idx+1]])
+
+    ###########################################################################
+    def iter_vals_in_row(self, row_idx):
+    ###########################################################################
+        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        return iter(self._values[self._csr_rows[row_idx]:self._csr_rows[row_idx+1]])
+
+    ###########################################################################
     def __eq__(self, rhs):
     ###########################################################################
         if self.nrows() != rhs.nrows() or self.ncols() != rhs.ncols():
@@ -175,11 +198,10 @@ class CSR(object):
         result._nrows = self.nrows()
         result._ncols = self.ncols()
 
-        prev_row_idx = 0
         nnz_count = 0
         nnz_skip = 0
-        for row_idx, row_nnz_idx in enumerate(self._csr_rows[1:]):
-            for col_idx in self._csr_cols[prev_row_idx:row_nnz_idx]:
+        for row_idx in range(self.nrows()):
+            for col_idx in self.iter_cols_in_row(row_idx):
                 if (lower and col_idx <= row_idx) or \
                     (not lower and col_idx >= row_idx):
                     result._csr_cols.append(col_idx)
@@ -188,7 +210,6 @@ class CSR(object):
                 else:
                     nnz_skip += 1
 
-            prev_row_idx = row_nnz_idx
             result._csr_rows.append(nnz_count)
 
         return result
@@ -254,7 +275,6 @@ class CSR(object):
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
         uresult = uself + urhs
-        curesult = CSR(uresult)
         expect(uresult == result.uncompress(), "CSR addition does not work")
 
         return result
@@ -264,7 +284,7 @@ class CSR(object):
     ###########################################################################
         for a_nz in range(a._csr_rows[row_idx], a._csr_rows[row_idx+1]):
             b_row = a._csr_cols[a_nz]
-            cols.update(b._csr_cols[b._csr_rows[b_row]:b._csr_rows[b_row+1]])
+            cols.update(b.iter_cols_in_row(b_row))
 
     ###########################################################################
     def _spgemm_accumulate_row2(self, cols, a, b, scale, row_idx):
@@ -302,17 +322,14 @@ class CSR(object):
             result._csr_rows.append(len(local_col_idxs))
 
         # build row pointers
-        curr_sum = 0
-        for idx, nnz in enumerate(result._csr_rows):
-            result._csr_rows[idx] = curr_sum
-            curr_sum += nnz
+        nnz = convert_counts_to_sum(result._csr_rows)
 
-        result._csr_rows.append(curr_sum)
+        result._csr_rows.append(nnz)
         expect(len(result._csr_rows) == self.nrows() + 1, "Bad csr_rows")
 
         # second sweep: accumulate non-zeros
-        result._csr_cols = [0] * curr_sum
-        result._values   = [0] * curr_sum
+        result._csr_cols = [0] * nnz
+        result._values   = [0] * nnz
 
         local_row_nzs = {}
         for lhs_row in range(self.nrows()):
@@ -337,16 +354,80 @@ class CSR(object):
     ###########################################################################
         result = SparseMatrix(self._nrows, self._ncols)
 
-        prev = 0
-        for row_idx, val in enumerate(self._csr_rows[1:]):
-            active_cols = self._csr_cols[prev:val]
-            idx = prev
-            for col in range(self._ncols):
-                if col in active_cols:
-                    result[row_idx][col] = self._values[idx]
-                    idx += 1
+        idx = 0
+        for row_idx in range(self._nrows):
+            for col_idx in self.iter_cols_in_row(row_idx):
+                result[row_idx][col_idx] = self._values[idx]
+                idx += 1
 
-            prev = val
+        return result
+
+###############################################################################
+class CSC(object):
+###############################################################################
+
+    ###########################################################################
+    def __init__(self, csr_matrix):
+    ###########################################################################
+        self._nrows = csr_matrix.nrows()
+        self._ncols = csr_matrix.ncols()
+
+        csr_nnz = len(csr_matrix._values)
+        self._values = [0.0] * csr_nnz
+        self._csc_cols = [0] * (self._ncols + 1)
+        self._csc_rows = [0] * csr_nnz
+
+        nnz = 0
+        for col_idx in csr_matrix._csr_cols:
+            self._csc_cols[col_idx] += 1
+            nnz += 1
+
+        expect(nnz == csr_nnz, f"Bad nnz in CSC init, {nnz} != {csr_nnz}")
+
+        convert_counts_to_sum(self._csc_cols)
+
+        counts = [0] * self._ncols # [col]->num occurences found for col
+        # Find rows that have these cols
+        for row_idx in range(csr_matrix.nrows()):
+            for csr_col_idx, val in zip(csr_matrix.iter_cols_in_row(row_idx), csr_matrix.iter_vals_in_row(row_idx)):
+                col_count = counts[csr_col_idx]
+                counts[csr_col_idx] += 1
+                rows_offset = self._csc_cols[csr_col_idx] + col_count
+                self._csc_rows[rows_offset] = row_idx
+                self._values[rows_offset]   = val
+
+        # Debug check
+        expect(csr_matrix.uncompress() == self.uncompress(), "CSC contructor broken")
+
+    ###########################################################################
+    def nrows(self): return self._nrows
+    ###########################################################################
+
+    ###########################################################################
+    def ncols(self): return self._ncols
+    ###########################################################################
+
+    ###########################################################################
+    def __str__(self):
+    ###########################################################################
+        return str(self.uncompress())
+
+    ###########################################################################
+    def iter_rows_in_col(self, col_idx):
+    ###########################################################################
+        expect(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
+        return iter(self._csc_rows[self._csc_cols[col_idx]:self._csc_cols[col_idx+1]])
+
+    ###########################################################################
+    def uncompress(self):
+    ###########################################################################
+        result = SparseMatrix(self._nrows, self._ncols)
+
+        idx = 0
+        for col_idx in range(self._ncols):
+            for row_idx in self.iter_rows_in_col(col_idx):
+                result[row_idx][col_idx] = self._values[idx]
+                idx += 1
 
         return result
 
@@ -376,32 +457,94 @@ class PARILUT(object):
         to L and U, where new values are chosen based on the residual
         value divided by the corresponding diagonal entry.
         """
-        lua = lu + self._A_csr
-        #     abstract_spgeam(
-        # a, lu,
-        # [&](IndexType row) {
-        #     l_new_row_ptrs[row] = l_nnz;
-        #     u_new_row_ptrs[row] = u_nnz;
-        #     return 0;
-        # },
-        # [&](IndexType row, IndexType col, ValueType, ValueType, int) {
-        #     l_nnz += col <= row;
-        #     u_nnz += col >= row;
-        # },
+        # Very inefficient
+        l_new = CSR(SparseMatrix(self._A_csr.nrows(), self._A_csr.ncols()))
+        u_new = CSR(SparseMatrix(self._A_csr.nrows(), self._A_csr.ncols()))
 
-        #l_new = CSR(SparseMatrix(self._A_csr.nrows(), self._A_csr.ncols))
+        def begin_row_cb_sizing(row_idx):
+            l_new._csr_rows[row_idx] = l_new._csr_rows[-1]
+            u_new._csr_rows[row_idx] = u_new._csr_rows[-1]
 
+        def entry_cb_sizing(row_idx, col_idx, _, __, ___):
+            l_new._csr_rows[-1] += col_idx <= row_idx
+            u_new._csr_rows[-1] += col_idx >= row_idx
 
-        # self._A_csr.abstract_spgeam(lu,
+        self._A_csr.abstract_spgeam(lu, begin_row_cb_sizing, entry_cb_sizing)
+
+        l_new._csr_cols = [0]   * l_new._csr_rows[-1]
+        l_new._values   = [0.0] * l_new._csr_rows[-1]
+        u_new._csr_cols = [0]   * u_new._csr_rows[-1]
+        u_new._values   = [0.0] * u_new._csr_rows[-1]
+
+        @dataclass
+        class RowState:
+            l_new_nz:    int
+            u_new_nz:    int
+            l_old_begin: int
+            l_old_end:   int
+            u_old_begin: int
+            u_old_end:   int
+            finished_l:  bool
+
+        def begin_row_cb(row_idx):
+            state = RowState(
+                l_new._csr_rows[row_idx],
+                u_new._csr_rows[row_idx],
+                self._L_csr._csr_rows[row_idx],
+                self._L_csr._csr_rows[row_idx + 1] - 1,  # skip diagonal. JGF: what if there isn't one?
+                self._U_csr._csr_rows[row_idx],
+                self._U_csr._csr_rows[row_idx + 1],
+                (self._L_csr._csr_rows[row_idx] >= self._L_csr._csr_rows[row_idx + 1] - 1)) # JGF Modify!
+            return state
+
+        def entry_cb(row_idx, col_idx, a_val, lu_val, state):
+            r_val = a_val - lu_val
+            # load matching entry of L + U
+            lpu_col = (self._U_csr._csr_cols[state.u_old_begin] if state.u_old_begin < state.u_old_end else sys.maxsize) \
+                      if state.finished_l else self._L_csr._csr_cols[state.l_old_begin]
+            lpu_val = (self._U_csr._values[state.u_old_begin] if state.u_old_begin < state.u_old_end else 0.0) \
+                      if state.finished_l else self._L_csr._values[state.l_old_begin]
+
+            # load diagonal entry of U for lower diagonal entries
+            idx = self._U_csr._csr_rows[col_idx]
+            diag = self._U_csr._values[idx] if col_idx < row_idx and idx < len(self._U_csr._values) else 1.0 # JGF Modify!
+            # if there is already an entry present, use that instead.
+            out_val = lpu_val if lpu_col == col_idx else r_val / diag
+            # store output entries
+            if row_idx >= col_idx:
+                l_new._csr_cols[state.l_new_nz] = col_idx
+                l_new._values[state.l_new_nz] = 1.0 if row_idx == col_idx else out_val
+                state.l_new_nz += 1
+            if row_idx <= col_idx:
+                u_new._csr_cols[state.u_new_nz] = col_idx
+                u_new._values[state.u_new_nz] = out_val
+                state.u_new_nz += 1
+
+            # advance entry of L + U if we used it
+            if state.finished_l:
+                state.u_old_begin += (lpu_col == col_idx)
+            else:
+                state.l_old_begin += (lpu_col == col_idx)
+                state.finished_l = (state.l_old_begin == state.l_old_end)
+
+        self._A_csr.abstract_spgeam(lu, begin_row_cb, entry_cb)
+
+        return l_new, u_new
 
     ###########################################################################
     def main(self):
     ###########################################################################
         converged = False
         while not converged:
-            LU = self._L_csr * self._U_csr
+            LU_csr = self._L_csr * self._U_csr
 
-            self._add_candidates(LU)
+            l_new_csr, u_new_csr = self._add_candidates(LU_csr)
+
+            # Convert u_new to CSC
+            u_new_csc = CSC(u_new_csr)
+
+            # Convert u_new and l_new to COO
+            #u_
 
             converged = True
 
