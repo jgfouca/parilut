@@ -239,10 +239,8 @@ class CSR(object):
         expect(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
 
         for row_idx in range(self.nrows()):
-            a_begin = self._csr_rows[row_idx]
-            a_end   = self._csr_rows[row_idx+1]
-            b_begin = rhs._csr_rows[row_idx]
-            b_end   = rhs._csr_rows[row_idx+1]
+            a_begin, a_end = self.get_nnz_range(row_idx)
+            b_begin, b_end = rhs.get_nnz_range(row_idx)
             tot     = (a_end - a_begin) + (b_end - b_begin)
 
             local_data = begin_row_cb(row_idx)
