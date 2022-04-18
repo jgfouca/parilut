@@ -28,6 +28,8 @@ class SparseMatrix(object):
 ###############################################################################
     """
     A 2D uncompressed sparse matrix, row major, implemented as a list of lists
+
+    Slow, only used for initialization and debugging
     """
 
     ###########################################################################
@@ -145,6 +147,19 @@ class SparseMatrix(object):
 
         return result
 
+    ###########################################################################
+    def filter_pred(self, pred):
+    ###########################################################################
+        result = SparseMatrix(self.nrows(), self.ncols())
+
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                val = self[i][j]
+                if pred(i, j, val):
+                    result[i][j] = val
+
+        return result
+
 ###############################################################################
 class CompressedMatrix(object):
 ###############################################################################
@@ -191,6 +206,8 @@ class CSR(CompressedMatrix):
 
                 self._csr_rows[row_idx+1] = nnz
 
+            expect(self.uncompress() == src_matrix, "CSR compression failed")
+
     ###########################################################################
     def get_nnz_range(self, row_idx):
     ###########################################################################
@@ -218,37 +235,29 @@ class CSR(CompressedMatrix):
     ###########################################################################
     def __eq__(self, rhs):
     ###########################################################################
+        result = True
         if self.nrows() != rhs.nrows() or self.ncols() != rhs.ncols():
-            return False
+            result = False
 
         if (self._csr_rows != rhs._csr_rows) or \
            (self._csr_cols != rhs._csr_cols) or \
            (self._values   != rhs._values):
-            return False
+            result = False
 
-        return True
+        # Debug check
+        expect(result == (self.uncompress() == rhs.uncompress()), "csr eq failed")
+
+        return result
 
     ###########################################################################
     def make_triangular(self, lower=True):
     ###########################################################################
-        result = CSR()
-        result._nrows = self.nrows()
-        result._ncols = self.ncols()
+        result = self.filter_pred(
+            lambda row_idx, col_idx, _: (lower and col_idx <= row_idx) or (not lower and col_idx >= row_idx))
 
-        # Would be faster with known L, U nnz sizes, but that's ok
-        nnz_count = 0
-        nnz_skip = 0
-        for row_idx in range(self.nrows()):
-            for col_idx in self.iter_cols_in_row(row_idx):
-                if (lower and col_idx <= row_idx) or \
-                    (not lower and col_idx >= row_idx):
-                    result._csr_cols.append(col_idx)
-                    result._values.append(self._values[nnz_count + nnz_skip])
-                    nnz_count += 1
-                else:
-                    nnz_skip += 1
-
-            result._csr_rows.append(nnz_count)
+        # Debug check
+        expect(result.uncompress() == self.uncompress().make_triangular(lower=lower),
+               "csr make triangular failed")
 
         return result
 
@@ -414,6 +423,38 @@ class CSR(CompressedMatrix):
 
         return result
 
+    ###########################################################################
+    def filter_pred(self, pred):
+    ###########################################################################
+        result = CSR(self.nrows(), self.ncols())
+
+        # Sizes
+        for row_idx in range(self.nrows()):
+            for col_idx, val in self.iter_row(row_idx):
+                if pred(row_idx, col_idx, val):
+                    result._csr_rows[row_idx] += 1
+
+        convert_counts_to_sum(result._csr_rows)
+        nnz = result._csr_rows[-1]
+
+        result._values = [0.0] * nnz
+        result._csr_cols = [0] * nnz
+
+        # Vals
+        nnz = 0
+        for row_idx in range(self.nrows()):
+            for col_idx, val in self.iter_row(row_idx):
+                if pred(row_idx, col_idx, val):
+                    result._csr_cols[nnz] = col_idx
+                    result._values[nnz] = val
+                    nnz += 1
+
+        # Debug check
+        expect(result.uncompress() == self.uncompress().filter_pred(pred),
+               "csr filter_pred failed")
+
+        return result
+
 ###############################################################################
 class CSC(CompressedMatrix):
 ###############################################################################
@@ -497,7 +538,7 @@ class COO(CompressedMatrix):
 
         idx = 0
         for row_idx in range(self._nrows):
-            for col_idx, val in zip(csr_matrix.iter_cols_in_row(row_idx), csr_matrix.iter_vals_in_row(row_idx)):
+            for col_idx, val in csr_matrix.iter_row(row_idx):
                 self._coo_rows[idx] = row_idx
                 self._coo_cols[idx] = col_idx
                 self._values[idx]   = val
@@ -530,10 +571,6 @@ class PARILUT(object):
         self._L_csr = self._A_csr.make_triangular()
         self._U_csr = self._A_csr.make_triangular(lower=False)
 
-        expect(self._A == self._A_csr.uncompress(), "CSR compression does not work")
-        expect(self._L_csr.uncompress() == self._A.make_triangular(), "CSR lower tri does not work")
-        expect(self._U_csr.uncompress() == self._A.make_triangular(lower=False), "CSR lower tri does not work")
-
     ###########################################################################
     def _add_candidates(self, lu):
     ###########################################################################
@@ -544,14 +581,17 @@ class PARILUT(object):
         """
         nrows = self._A.nrows()
 
-        l_new_rows = [0] * nrows
-        u_new_rows = [0] * nrows
+        l_new_rows = [0] * (nrows+1)
+        u_new_rows = [0] * (nrows+1)
 
         l_new_nnz, u_new_nnz = \
             self._A_csr.abstract_spgeam_lu_size(lu, l_new_rows, u_new_rows)
 
         l_new = CSR(nrows, nrows, l_new_nnz)
         u_new = CSR(nrows, nrows, u_new_nnz)
+
+        l_new._csr_rows = l_new_rows
+        u_new._csr_rows = u_new_rows
 
         @dataclass
         class RowState:
@@ -615,7 +655,7 @@ class PARILUT(object):
         return l_new, u_new
 
     ###########################################################################
-    def _compute_l_u_factors(self, l_csr, l_coo, u_csr, u_coo, u_csc):
+    def _compute_l_u_factors(self, l_csr, u_csr, u_csc):
     ###########################################################################
         """
         JGF: why are COO's needed?
@@ -661,31 +701,77 @@ class PARILUT(object):
                 u_csr._values[u_nz] = new_val
                 u_csc._values[ut_nz] = new_val
 
+        # Debug
+        expect(u_csr.uncompress() == u_csc.uncompress(), "Bad compute_l_u_factors")
+
+    ###########################################################################
+    def _threshold_select(self, m, idx):
+    ###########################################################################
+        values_cp = list(m._values)
+        values_cp.sort(key=abs)
+        return abs(values_cp[idx])
+
+    ###########################################################################
+    def _is_converged(self):
+    ###########################################################################
+        return self._L_csr.nnz() == 0 or self._U_csr.nnz() == 0
+
     ###########################################################################
     def main(self):
     ###########################################################################
         converged = False
+        it = 0
         while not converged:
             LU_csr = self._L_csr * self._U_csr
+            print("LU")
+            print(LU_csr)
 
             l_new_csr, u_new_csr = self._add_candidates(LU_csr)
 
-            # Convert u_new to CSC
-            u_new_csc = CSC(u_new_csr)
+            print("candidates")
+            print(l_new_csr)
+            print(u_new_csr)
 
-            # Convert u_new and l_new to COO, JGF these may not be needed
-            l_new_coo = COO(l_new_csr)
-            u_new_coo = COO(u_new_csr)
+            self._compute_l_u_factors(l_new_csr, u_new_csr, CSC(u_new_csr))
 
-            self._compute_l_u_factors(l_new_csr, l_new_coo, u_new_csr, u_new_coo, u_new_csc)
+            print("LU factors")
+            print(l_new_csr)
+            print(u_new_csr)
 
-    #             IndexType l_nnz = l_new->get_num_stored_elements();
-    # IndexType u_nnz = u_new->get_num_stored_elements();
+            l_nnz = l_new_csr.nnz()
+            u_nnz = u_new_csr.nnz()
+            # JGF assume no fill limits
+            l_nnz_limit = 0
+            u_nnz_limit = 0
+            l_filter_rank = 1 #max(0, l_nnz - l_nnz_limit - 1)
+            u_filter_rank = 1 #max(0, u_nnz - u_nnz_limit - 1)
 
-    #         l_filter_rank = max(0, l_nnz - l_nnz_limit - 1);
-    # auto u_filter_rank = std::max<IndexType>(0, u_nnz - u_nnz_limit - 1);
+            # select threshold to remove smallest candidates
+            l_threshold = self._threshold_select(l_new_csr, l_filter_rank)
+            u_threshold = self._threshold_select(u_new_csr, u_filter_rank)
 
-            converged = True
+            # remove smallest candidates from L' and U', storing the
+            # results in the original objects
+            self._L_csr = l_new_csr.filter_pred(lambda row, col, val: abs(val) >= l_threshold)
+            self._U_csr = u_new_csr.filter_pred(lambda row, col, val: abs(val) >= u_threshold)
+            expect(self._L_csr.nnz() == l_nnz-1, "Bad filter")
+            expect(self._U_csr.nnz() == u_nnz-1, "Bad filter")
+
+            print(f"After threshhold {l_threshold}, {u_threshold}")
+            print(self._L_csr)
+            print(self._U_csr)
+
+            self._compute_l_u_factors(self._L_csr, self._U_csr, CSC(self._U_csr))
+
+            print("LU factors 2")
+            print(self._L_csr)
+            print(self._U_csr)
+
+            converged = self._is_converged()
+            print("IT")
+
+            it += 1
+            converged = it > 2
 
 ###############################################################################
 def parilut(rows, cols, pct_nz, seed):
