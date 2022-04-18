@@ -40,7 +40,7 @@ class SparseMatrix(object):
                 roll = random.randint(0, 100)
                 nz = roll < pct_nz
                 nz_val = random.uniform(0.0, 1.0)
-                row.append(nz_val if nz else 0.0)
+                row.append(nz_val if nz else 0.0) # Slow but that's OK for this class
 
         # Non-zero matrix must have at least 1 value in each row and col
         # so make diagonal non-zero
@@ -135,42 +135,61 @@ class SparseMatrix(object):
 
         return result
 
+    ###########################################################################
+    def nnz(self):
+    ###########################################################################
+        result = 0
+        for row in self:
+            for col in row:
+                result += col != 0.0
+
+        return result
+
 ###############################################################################
-class CSR(object):
+class CompressedMatrix(object):
 ###############################################################################
 
-    ###########################################################################
-    def __init__(self, src_matrix):
-    ###########################################################################
-        self._nrows = src_matrix.nrows()
-        self._ncols = src_matrix.ncols()
+    def __init__(self, nrows, ncols, nnz):
+        self._nrows, self._ncols = nrows, ncols
+        self._values = [0.0] * nnz
 
-        self._values   = []
-        self._csr_cols = []
-        self._csr_rows = [0]
-
-        nnz = 0
-        for row in src_matrix:
-            for col_idx, val in enumerate(row):
-                if val != 0.0:
-                    self._csr_cols.append(col_idx)
-                    self._values.append(val)
-                    nnz += 1
-
-            self._csr_rows.append(nnz)
-
-    ###########################################################################
     def __str__(self):
-    ###########################################################################
         return str(self.uncompress())
 
-    ###########################################################################
     def nrows(self): return self._nrows
-    ###########################################################################
+
+    def ncols(self): return self._ncols
+
+    def nnz(self): return len(self._values)
+
+    def uncompress(self): expect(False, "Subclass should implement")
+
+###############################################################################
+class CSR(CompressedMatrix):
+###############################################################################
 
     ###########################################################################
-    def ncols(self): return self._ncols
+    def __init__(self, nrows=0, ncols=0, nnz=0, src_matrix=None):
     ###########################################################################
+        if src_matrix is not None:
+            expect(nrows == 0 and ncols == 0 and nnz == 0, "Do not use with src_matrix")
+            nrows, ncols, nnz = src_matrix.nrows(), src_matrix.ncols(), src_matrix.nnz()
+
+        super().__init__(nrows, ncols, nnz)
+
+        self._csr_cols = [0] * self.nnz()
+        self._csr_rows = [0] * (self.nrows()+1)
+
+        if src_matrix is not None:
+            nnz = 0
+            for row_idx, row in enumerate(src_matrix):
+                for col_idx, val in enumerate(row):
+                    if val != 0.0:
+                        self._csr_cols[nnz] = col_idx
+                        self._values[nnz] = val
+                        nnz += 1
+
+                self._csr_rows[row_idx+1] = nnz
 
     ###########################################################################
     def get_nnz_range(self, row_idx):
@@ -212,10 +231,11 @@ class CSR(object):
     ###########################################################################
     def make_triangular(self, lower=True):
     ###########################################################################
-        result = CSR(SparseMatrix(0, 0))
+        result = CSR()
         result._nrows = self.nrows()
         result._ncols = self.ncols()
 
+        # Would be faster with known L, U nnz sizes, but that's ok
         nnz_count = 0
         nnz_skip = 0
         for row_idx in range(self.nrows()):
@@ -265,28 +285,57 @@ class CSR(object):
                          local_data)
 
     ###########################################################################
+    def abstract_spgeam_lu_size(self, rhs, l_new, u_new):
+    ###########################################################################
+
+        def begin_row_cb_sizing(row_idx):
+            l_new[row_idx] = l_new[-1]
+            u_new[row_idx] = u_new[-1]
+
+        def entry_cb_sizing(row_idx, col_idx, _, __, ___):
+            l_new[-1] += col_idx <= row_idx
+            u_new[-1] += col_idx >= row_idx
+
+        self.abstract_spgeam(rhs, begin_row_cb_sizing, entry_cb_sizing)
+
+        return l_new[-1], u_new[-1]
+
+    ###########################################################################
+    def abstract_spgeam_size(self, rhs, csr_rows):
+    ###########################################################################
+
+        def begin_row_cb_sizing(row_idx):
+            csr_rows[row_idx] = csr_rows[-1]
+
+        def entry_cb_sizing(_, __, ___, ____, _____):
+            csr_rows[-1] += 1
+
+        self.abstract_spgeam(rhs, begin_row_cb_sizing, entry_cb_sizing)
+
+        return csr_rows[-1]
+
+    ###########################################################################
     def __add__(self, rhs):
     ###########################################################################
         """
         Sparse general matrix-matrix addition (spgeam)
         """
-        # Cheesy way to create an empty CSR
-        result = CSR(SparseMatrix(0, 0))
-        result._csr_rows = []
+        result = CSR(self.nrows(), self.nrows())
 
-        result._nrows = self.nrows()
-        result._ncols = 0
+        nnz = self.abstract_spgeam_size(rhs, result._csr_rows)
+        result._csr_cols = [0] * nnz
+        result._values = [0.0] * nnz
+        result._ncols = 0 # Temporarily use as scratch space for cur_nnz count
 
-        begin_row_cb = lambda row_idx : result._csr_rows.append(result._ncols)
+        begin_row_cb = lambda x : x
         def entry_cb(row_idx, col_idx, a_val, b_val, _):
+            result._csr_cols[result._ncols] = col_idx
+            result._values[result._ncols] = a_val + b_val
             result._ncols += 1
-            result._csr_cols.append(col_idx)
-            result._values.append(a_val + b_val)
 
         self.abstract_spgeam(rhs, begin_row_cb, entry_cb)
 
-        result._csr_rows.append(result._ncols)
-        result._ncols = self.ncols()
+        result._ncols = self.ncols() # Stop using as scratch space
 
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
@@ -319,28 +368,22 @@ class CSR(object):
         """
         expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
 
-        # Cheesy way to create an empty CSR
-        result = CSR(SparseMatrix(0, 0))
-        result._csr_rows = []
-
-        result._nrows = self.nrows()
-        result._ncols = rhs.ncols()
+        result = CSR(self.nrows(), rhs.ncols())
 
         # first sweep: count nnz for each row
         for lhs_row in range(self.nrows()):
             local_col_idxs = set()
             self._spgemm_insert_row2(local_col_idxs, self, rhs, lhs_row)
-            result._csr_rows.append(len(local_col_idxs))
+            result._csr_rows[lhs_row] = len(local_col_idxs)
 
         # build row pointers
         nnz = convert_counts_to_sum(result._csr_rows)
 
-        result._csr_rows.append(nnz)
         expect(len(result._csr_rows) == self.nrows() + 1, "Bad csr_rows")
 
         # second sweep: accumulate non-zeros
         result._csr_cols = [0] * nnz
-        result._values   = [0] * nnz
+        result._values   = [0.0] * nnz
 
         local_row_nzs = {}
         for lhs_row in range(self.nrows()):
@@ -372,26 +415,23 @@ class CSR(object):
         return result
 
 ###############################################################################
-class CSC(object):
+class CSC(CompressedMatrix):
 ###############################################################################
 
     ###########################################################################
     def __init__(self, csr_matrix):
     ###########################################################################
-        self._nrows = csr_matrix.nrows()
-        self._ncols = csr_matrix.ncols()
+        super().__init__(csr_matrix.nrows(), csr_matrix.ncols(), csr_matrix.nnz())
 
-        csr_nnz = len(csr_matrix._values)
-        self._values = [0.0] * csr_nnz
         self._csc_cols = [0] * (self._ncols + 1)
-        self._csc_rows = [0] * csr_nnz
+        self._csc_rows = [0] * self.nnz()
 
         nnz = 0
         for col_idx in csr_matrix._csr_cols:
             self._csc_cols[col_idx] += 1
             nnz += 1
 
-        expect(nnz == csr_nnz, f"Bad nnz in CSC init, {nnz} != {csr_nnz}")
+        expect(nnz == self.nnz(), f"Bad nnz in CSC init, {nnz} != {self.nnz()}")
 
         convert_counts_to_sum(self._csc_cols)
 
@@ -407,19 +447,6 @@ class CSC(object):
 
         # Debug check
         expect(csr_matrix.uncompress() == self.uncompress(), "CSC contructor broken")
-
-    ###########################################################################
-    def nrows(self): return self._nrows
-    ###########################################################################
-
-    ###########################################################################
-    def ncols(self): return self._ncols
-    ###########################################################################
-
-    ###########################################################################
-    def __str__(self):
-    ###########################################################################
-        return str(self.uncompress())
 
     ###########################################################################
     def get_nnz_range(self, col_idx):
@@ -457,19 +484,16 @@ class CSC(object):
         return result
 
 ###############################################################################
-class COO(object):
+class COO(CompressedMatrix):
 ###############################################################################
 
     ###########################################################################
     def __init__(self, csr_matrix):
     ###########################################################################
-        self._nrows = csr_matrix.nrows()
-        self._ncols = csr_matrix.ncols()
+        super().__init__(csr_matrix.nrows(), csr_matrix.ncols(), csr_matrix.nnz())
 
-        csr_nnz = len(csr_matrix._values)
-        self._values = [0.0] * csr_nnz
-        self._coo_rows = [0] * csr_nnz
-        self._coo_cols = [0] * csr_nnz
+        self._coo_rows = [0] * self.nnz()
+        self._coo_cols = [0] * self.nnz()
 
         idx = 0
         for row_idx in range(self._nrows):
@@ -502,7 +526,7 @@ class PARILUT(object):
         expect(A.nrows() == A.ncols(), "PARILUT matrix must be square")
 
         self._A     = A
-        self._A_csr = CSR(A)
+        self._A_csr = CSR(src_matrix=A)
         self._L_csr = self._A_csr.make_triangular()
         self._U_csr = self._A_csr.make_triangular(lower=False)
 
@@ -518,24 +542,16 @@ class PARILUT(object):
         to L and U, where new values are chosen based on the residual
         value divided by the corresponding diagonal entry.
         """
-        # Very inefficient
-        l_new = CSR(SparseMatrix(self._A_csr.nrows(), self._A_csr.ncols()))
-        u_new = CSR(SparseMatrix(self._A_csr.nrows(), self._A_csr.ncols()))
+        nrows = self._A.nrows()
 
-        def begin_row_cb_sizing(row_idx):
-            l_new._csr_rows[row_idx] = l_new._csr_rows[-1]
-            u_new._csr_rows[row_idx] = u_new._csr_rows[-1]
+        l_new_rows = [0] * nrows
+        u_new_rows = [0] * nrows
 
-        def entry_cb_sizing(row_idx, col_idx, _, __, ___):
-            l_new._csr_rows[-1] += col_idx <= row_idx
-            u_new._csr_rows[-1] += col_idx >= row_idx
+        l_new_nnz, u_new_nnz = \
+            self._A_csr.abstract_spgeam_lu_size(lu, l_new_rows, u_new_rows)
 
-        self._A_csr.abstract_spgeam(lu, begin_row_cb_sizing, entry_cb_sizing)
-
-        l_new._csr_cols = [0]   * l_new._csr_rows[-1]
-        l_new._values   = [0.0] * l_new._csr_rows[-1]
-        u_new._csr_cols = [0]   * u_new._csr_rows[-1]
-        u_new._values   = [0.0] * u_new._csr_rows[-1]
+        l_new = CSR(nrows, nrows, l_new_nnz)
+        u_new = CSR(nrows, nrows, u_new_nnz)
 
         @dataclass
         class RowState:
@@ -590,6 +606,12 @@ class PARILUT(object):
 
         self._A_csr.abstract_spgeam(lu, begin_row_cb, entry_cb)
 
+        # Debug
+        for row_idx in range(nrows):
+            for result in [l_new, u_new]:
+                for val in result.iter_vals_in_row(row_idx):
+                    expect(val != 0.0, "Bad val in result")
+
         return l_new, u_new
 
     ###########################################################################
@@ -639,7 +661,6 @@ class PARILUT(object):
                 u_csr._values[u_nz] = new_val
                 u_csc._values[ut_nz] = new_val
 
-
     ###########################################################################
     def main(self):
     ###########################################################################
@@ -652,21 +673,30 @@ class PARILUT(object):
             # Convert u_new to CSC
             u_new_csc = CSC(u_new_csr)
 
-            # Convert u_new and l_new to COO
+            # Convert u_new and l_new to COO, JGF these may not be needed
             l_new_coo = COO(l_new_csr)
             u_new_coo = COO(u_new_csr)
 
             self._compute_l_u_factors(l_new_csr, l_new_coo, u_new_csr, u_new_coo, u_new_csc)
 
+    #             IndexType l_nnz = l_new->get_num_stored_elements();
+    # IndexType u_nnz = u_new->get_num_stored_elements();
+
+    #         l_filter_rank = max(0, l_nnz - l_nnz_limit - 1);
+    # auto u_filter_rank = std::max<IndexType>(0, u_nnz - u_nnz_limit - 1);
+
             converged = True
 
 ###############################################################################
-def parilut(rows, cols, pct_nz):
+def parilut(rows, cols, pct_nz, seed):
 ###############################################################################
     expect(rows > 0, f"Bad rows {rows}")
     expect(cols > 0, f"Bad cols {rows}")
     expect(rows == cols, f"{rows} != {cols}. Only square matrices allowed")
     expect(pct_nz > 0 and pct_nz <= 100, f"Bad pct_nz {pct_nz}")
+
+    if seed is not None:
+        random.seed(seed)
 
     A = SparseMatrix(rows, cols, pct_nz)
     print(A)
