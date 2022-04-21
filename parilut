@@ -32,6 +32,8 @@ OR
 
     parser.add_argument("-s", "--seed", type=int, help="The random number generator seed.")
 
+    parser.add_argument("-c", "--hardcoded", type=int, help="Use a hardcoded matrix.")
+
     return parser.parse_args(args[1:])
 
 ###############################################################################

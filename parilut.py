@@ -45,10 +45,32 @@ class SparseMatrix(object):
                 row.append(nz_val if nz else 0.0) # Slow but that's OK for this class
 
         # Non-zero matrix must have at least 1 value in each row and col
-        # so make diagonal non-zero
+        # so make unit diagonal
         if pct_nz > 0:
             for i in range(rows):
-                self[i][i] = random.uniform(0.0, 1.0)
+                self[i][i] = 1.0
+
+    ###########################################################################
+    @staticmethod
+    def get_hardcode(matrix_id):
+    ###########################################################################
+        if matrix_id == 0:
+            hardcoded_vals = [
+                [1.,   6.,   4., 7.],
+                [2.,  -5.,   0., 8.],
+                [0.5, -3.,   6., 0.],
+                [0.2, -0.5, -9., 0.,],
+            ]
+            result = SparseMatrix(4, 4)
+            for row_idx in range(4):
+                for col_idx in range(4):
+                    result[row_idx][col_idx] = hardcoded_vals[row_idx][col_idx]
+
+            return result
+        else:
+            expect(False, f"Unknown hardcoded matrix id {matrix_id}")
+
+        return None
 
     ###########################################################################
     def __str__(self):
@@ -125,17 +147,27 @@ class SparseMatrix(object):
         return result
 
     ###########################################################################
-    def make_triangular(self, lower=True):
+    def make_lu(self):
     ###########################################################################
-        result = SparseMatrix(self.nrows(), self.ncols())
+        l = SparseMatrix(self.nrows(), self.ncols())
+        u = SparseMatrix(self.nrows(), self.ncols())
 
-        for i in range(self.nrows()):
-            for j in range(self.ncols()):
-                if (lower and j <= i) or \
-                   (not lower and j >= i):
-                    result[i][j] = self[i][j]
+        for row_idx in range(self.nrows()):
+            diag_val = 1.
+            for col_idx in range(self.ncols()):
+                val = self[row_idx][col_idx]
+                if col_idx < row_idx:
+                    l[row_idx][col_idx] = val
+                elif col_idx == row_idx:
+                    l[row_idx][col_idx] = 1.
+                    if val != 0.0:
+                        diag_val = val
+                else:
+                    u[row_idx][col_idx] = val
 
-        return result
+            u[row_idx][row_idx] = diag_val
+
+        return l, u
 
     ###########################################################################
     def nnz(self):
@@ -233,6 +265,25 @@ class CSR(CompressedMatrix):
         return zip(self.iter_cols_in_row(row_idx), self.iter_vals_in_row(row_idx))
 
     ###########################################################################
+    def has(self, row_idx, col_idx_arg):
+    ###########################################################################
+        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        # Slow but that's OK for now
+        for col_idx in self.iter_cols_in_row(row_idx):
+            if col_idx == col_idx_arg:
+                return True
+            if col_idx > col_idx_arg: # We passed it
+                return False
+
+        return False
+
+    ###########################################################################
+    def resize(self, nnz):
+    ###########################################################################
+        self._csr_cols = [0]*nnz
+        self._values   = [0.]*nnz
+
+    ###########################################################################
     def __eq__(self, rhs):
     ###########################################################################
         result = True
@@ -250,16 +301,62 @@ class CSR(CompressedMatrix):
         return result
 
     ###########################################################################
-    def make_triangular(self, lower=True):
+    def make_lu(self):
     ###########################################################################
-        result = self.filter_pred(
-            lambda row_idx, col_idx, _: (lower and col_idx <= row_idx) or (not lower and col_idx >= row_idx))
+        l = CSR(self.nrows(), self.ncols())
+        u = CSR(self.nrows(), self.ncols())
 
-        # Debug check
-        expect(result.uncompress() == self.uncompress().make_triangular(lower=lower),
-               "csr make triangular failed")
+        # Sizing
+        l_nnz = 0
+        u_nnz = 0
+        for row_idx in range(self.nrows()):
+            for col_idx in self.iter_cols_in_row(row_idx):
+                # don't count diagonal
+                l_nnz += col_idx < row_idx
+                u_nnz += col_idx > row_idx
 
-        return result
+            # add diagonal again
+            l_nnz += 1
+            u_nnz += 1
+            l._csr_rows[row_idx + 1] = l_nnz
+            u._csr_rows[row_idx + 1] = u_nnz
+
+        l.resize(l_nnz)
+        u.resize(u_nnz)
+
+        for row_idx in range(self.nrows()):
+            current_index_l = l._csr_rows[row_idx]
+            current_index_u = u._csr_rows[row_idx] + 1 # we treat the diagonal separately
+            # if there is no diagonal value, set it to 1 by default
+            diag_val = 1.
+            for col_idx, val in self.iter_row(row_idx):
+                if col_idx < row_idx:
+                    l._csr_cols[current_index_l] = col_idx
+                    l._values[current_index_l] = val
+                    current_index_l += 1
+                elif col_idx == row_idx:
+                    # save diagonal value
+                    diag_val = val
+                else: # col > row
+                    u._csr_cols[current_index_u] = col_idx
+                    u._values[current_index_u] = val
+                    current_index_u += 1
+
+            # store diagonal values separately
+            l_diag_idx = l._csr_rows[row_idx + 1] - 1
+            u_diag_idx = u._csr_rows[row_idx]
+            l._csr_cols[l_diag_idx] = row_idx
+            u._csr_cols[u_diag_idx] = row_idx
+            l._values[l_diag_idx] = 1.
+            u._values[u_diag_idx] = diag_val
+
+        # Debug
+        uself = self.uncompress()
+        ul, uu = uself.make_lu()
+        expect(l.uncompress() == ul, "make_lu failed for u")
+        expect(u.uncompress() == uu, "make_lu failed for u")
+
+        return l, u
 
     ###########################################################################
     def abstract_spgeam(self, rhs, begin_row_cb, entry_cb):
@@ -455,6 +552,14 @@ class CSR(CompressedMatrix):
 
         return result
 
+    ###########################################################################
+    def sort(self):
+    ###########################################################################
+        """
+        What does sorting a matrix even mean?
+        """
+        expect(False, "No yet implemented")
+
 ###############################################################################
 class CSC(CompressedMatrix):
 ###############################################################################
@@ -568,8 +673,7 @@ class PARILUT(object):
 
         self._A     = A
         self._A_csr = CSR(src_matrix=A)
-        self._L_csr = self._A_csr.make_triangular()
-        self._U_csr = self._A_csr.make_triangular(lower=False)
+        self._L_csr, self._U_csr = self._A_csr.make_lu()
 
     ###########################################################################
     def _add_candidates(self, lu):
@@ -593,6 +697,16 @@ class PARILUT(object):
         l_new._csr_rows = l_new_rows
         u_new._csr_rows = u_new_rows
 
+        print("L_csr")
+        print(self._L_csr)
+        print("U_csr")
+        print(self._U_csr)
+
+        # Debug, expect diagonal non-zero
+        for row_idx in range(nrows):
+            expect(self._L_csr.has(row_idx, row_idx),
+                   f"No diagonal in L_csr[{row_idx}][{row_idx}]")
+
         @dataclass
         class RowState:
             l_new_nz:    int
@@ -608,10 +722,10 @@ class PARILUT(object):
                 l_new._csr_rows[row_idx],
                 u_new._csr_rows[row_idx],
                 self._L_csr._csr_rows[row_idx],
-                self._L_csr._csr_rows[row_idx + 1] - 1,  # skip diagonal. JGF: what if there isn't one?
+                self._L_csr._csr_rows[row_idx + 1] - 1,  # skip diagonal.
                 self._U_csr._csr_rows[row_idx],
                 self._U_csr._csr_rows[row_idx + 1],
-                (self._L_csr._csr_rows[row_idx] >= self._L_csr._csr_rows[row_idx + 1] - 1)) # JGF Modify!
+                (self._L_csr._csr_rows[row_idx] == self._L_csr._csr_rows[row_idx + 1]))
             return state
 
         def entry_cb(row_idx, col_idx, a_val, lu_val, state):
@@ -623,8 +737,8 @@ class PARILUT(object):
                       if state.finished_l else self._L_csr._values[state.l_old_begin]
 
             # load diagonal entry of U for lower diagonal entries
-            idx = self._U_csr._csr_rows[col_idx]
-            diag = self._U_csr._values[idx] if col_idx < row_idx and idx < len(self._U_csr._values) else 1.0 # JGF Modify!
+            diag = self._U_csr._values[self._U_csr._csr_rows[col_idx]] if col_idx < row_idx else 1.0
+
             # if there is already an entry present, use that instead.
             out_val = lpu_val if lpu_col == col_idx else r_val / diag
             # store output entries
@@ -645,12 +759,6 @@ class PARILUT(object):
                 state.finished_l = (state.l_old_begin == state.l_old_end)
 
         self._A_csr.abstract_spgeam(lu, begin_row_cb, entry_cb)
-
-        # Debug
-        for row_idx in range(nrows):
-            for result in [l_new, u_new]:
-                for val in result.iter_vals_in_row(row_idx):
-                    expect(val != 0.0, "Bad val in result")
 
         return l_new, u_new
 
@@ -714,7 +822,8 @@ class PARILUT(object):
     ###########################################################################
     def _is_converged(self):
     ###########################################################################
-        return self._L_csr.nnz() == 0 or self._U_csr.nnz() == 0
+        nrows = self._A.nrows()
+        return self._L_csr.nnz() == nrows  or self._U_csr.nnz() == nrows
 
     ###########################################################################
     def main(self):
@@ -743,8 +852,8 @@ class PARILUT(object):
             # JGF assume no fill limits
             l_nnz_limit = 0
             u_nnz_limit = 0
-            l_filter_rank = 1 #max(0, l_nnz - l_nnz_limit - 1)
-            u_filter_rank = 1 #max(0, u_nnz - u_nnz_limit - 1)
+            l_filter_rank = 4 #max(0, l_nnz - l_nnz_limit - 1)
+            u_filter_rank = 4 #max(0, u_nnz - u_nnz_limit - 1)
 
             # select threshold to remove smallest candidates
             l_threshold = self._threshold_select(l_new_csr, l_filter_rank)
@@ -754,8 +863,8 @@ class PARILUT(object):
             # results in the original objects
             self._L_csr = l_new_csr.filter_pred(lambda row, col, val: abs(val) >= l_threshold)
             self._U_csr = u_new_csr.filter_pred(lambda row, col, val: abs(val) >= u_threshold)
-            expect(self._L_csr.nnz() == l_nnz-1, "Bad filter")
-            expect(self._U_csr.nnz() == u_nnz-1, "Bad filter")
+            expect(self._L_csr.nnz() == l_nnz-l_filter_rank, "Bad filter")
+            expect(self._U_csr.nnz() == u_nnz-u_filter_rank, "Bad filter")
 
             print(f"After threshhold {l_threshold}, {u_threshold}")
             print(self._L_csr)
@@ -768,13 +877,15 @@ class PARILUT(object):
             print(self._U_csr)
 
             converged = self._is_converged()
-            print("IT")
+            print(f"IT, L nnz: {self._L_csr.nnz()}, U nnz: {self._U_csr.nnz()}")
 
             it += 1
-            converged = it > 2
+            expect(it < 100, "Not converging")
+
+        print(f"Converged in {it} iterations")
 
 ###############################################################################
-def parilut(rows, cols, pct_nz, seed):
+def parilut(rows, cols, pct_nz, seed, hardcoded):
 ###############################################################################
     expect(rows > 0, f"Bad rows {rows}")
     expect(cols > 0, f"Bad cols {rows}")
@@ -783,10 +894,22 @@ def parilut(rows, cols, pct_nz, seed):
 
     if seed is not None:
         random.seed(seed)
+    else:
+        seed = random.randrange(sys.maxsize)
+        random.seed(seed)
 
-    A = SparseMatrix(rows, cols, pct_nz)
-    print(A)
+    try:
+        if hardcoded is not None:
+            A = SparseMatrix.get_hardcode(hardcoded)
+        else:
+            A = SparseMatrix(rows, cols, pct_nz)
 
-    pilut = PARILUT(A)
+        print("Original matrix")
+        print(A)
 
-    pilut.main()
+        pilut = PARILUT(A)
+
+        pilut.main()
+    except SystemExit as e:
+        print(f"Encounter error with seed {seed}", file=sys.stderr)
+        raise e
