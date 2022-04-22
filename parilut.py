@@ -703,7 +703,7 @@ class PARILUT(object):
 ###############################################################################
 
     ###########################################################################
-    def __init__(self, A):
+    def __init__(self, A, fill_in_limit=0.75, it=5):
     ###########################################################################
         expect(A.nrows() == A.ncols(), "PARILUT matrix must be square")
 
@@ -712,7 +712,8 @@ class PARILUT(object):
         self._L_csr, self._U_csr = self._A_csr.make_lu()
 
         # params
-        self._fill_in_limit = 0.75
+        self._fill_in_limit = fill_in_limit
+        self._it = it
 
         self._l_nnz_limit = int(math.floor(self._fill_in_limit * self._L_csr.nnz()))
         self._u_nnz_limit = int(math.floor(self._fill_in_limit * self._U_csr.nnz()))
@@ -861,10 +862,9 @@ class PARILUT(object):
         return abs(values_cp[idx])
 
     ###########################################################################
-    def _is_converged(self):
+    def _is_converged(self, it):
     ###########################################################################
-        nrows = self._A.nrows()
-        return self._L_csr.nnz() == nrows  or self._U_csr.nnz() == nrows
+        return it >= self._it
 
     ###########################################################################
     def main(self):
@@ -905,8 +905,6 @@ class PARILUT(object):
             # results in the original objects
             self._L_csr = l_new_csr.filter_pred(lambda row, col, val: abs(val) >= l_threshold or row == col)
             self._U_csr = u_new_csr.filter_pred(lambda row, col, val: abs(val) >= u_threshold or row == col)
-            # expect(self._L_csr.nnz() == l_nnz-l_filter_rank, "Bad filter")
-            # expect(self._U_csr.nnz() == u_nnz-u_filter_rank, "Bad filter")
 
             print(f"After ranks {l_filter_rank}, {u_filter_rank} and threshholds {l_threshold}, {u_threshold}")
             print(self._L_csr)
@@ -918,12 +916,42 @@ class PARILUT(object):
             print(self._L_csr)
             print(self._U_csr)
 
-            converged = self._is_converged()
-
             it += 1
-            expect(it < 5, "Not converging")
+            converged = self._is_converged(it)
 
         print(f"Converged in {it} iterations")
+
+    ###########################################################################
+    def check_hc_result(self, matrix_id):
+    ###########################################################################
+        if matrix_id == 0:
+            expected_l = [
+                [1.,       0.,       0.,       0.],
+                [2.,       1.,       0.,       0.],
+                [0.5,      0.352941, 1.,       0.],
+                [0.,       0.,       -1.31897, 1.],
+            ]
+            expected_u = [
+                [1.,       6.,       4.,       7.],
+                [0.,       -17.,     -8.,     -6.],
+                [0.,       0.,       6.82353,  0.],
+                [0.,       0.,       0.,       0.],
+            ]
+        else:
+            expect(False, f"Unknown hardcoded matrix id {matrix_id}")
+
+        l = self._L_csr.uncompress()
+        u = self._U_csr.uncompress()
+        tol = 1./1000
+
+        for row_idx in range(self._A.nrows()):
+            for col_idx in range(self._A.nrows()):
+                expect(math.isclose(l[row_idx][col_idx], expected_l[row_idx][col_idx], abs_tol=tol),
+                       f"L[{row_idx}][{col_idx}] did not have expected value.")
+                expect(math.isclose(u[row_idx][col_idx], expected_u[row_idx][col_idx], abs_tol=tol),
+                       f"U[{row_idx}][{col_idx}] did not have expected value.")
+
+        print(f"hardcoded result {matrix_id} check passed.")
 
 ###############################################################################
 def parilut(rows, cols, pct_nz, seed, hardcoded):
@@ -951,6 +979,10 @@ def parilut(rows, cols, pct_nz, seed, hardcoded):
         pilut = PARILUT(A)
 
         pilut.main()
+
+        if hardcoded is not None:
+            pilut.check_hc_result(hardcoded)
+
     except SystemExit as e:
         print(f"Encounter error with seed {seed}", file=sys.stderr)
         raise e
