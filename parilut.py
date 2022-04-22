@@ -1,5 +1,5 @@
 
-import random, sys, bisect
+import random, sys, bisect, math
 from dataclasses import dataclass
 
 ###############################################################################
@@ -81,8 +81,6 @@ class SparseMatrix(object):
                 result += "{:.2f} ".format(val)
 
             result += "\n"
-
-        result += "\n"
 
         return result
 
@@ -189,6 +187,17 @@ class SparseMatrix(object):
                 val = self[i][j]
                 if pred(i, j, val):
                     result[i][j] = val
+
+        return result
+
+    ###########################################################################
+    def transpose(self):
+    ###########################################################################
+        result = SparseMatrix(self.nrows(), self.ncols())
+
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                result[j][i] = self[i][j]
 
         return result
 
@@ -560,6 +569,33 @@ class CSR(CompressedMatrix):
         """
         expect(False, "No yet implemented")
 
+
+    ###########################################################################
+    def transpose(self):
+    ###########################################################################
+        result = CSR(self.nrows(), self.ncols(), self.nnz())
+
+        # Sizes
+        for row_idx in range(self.nrows()):
+            for col_idx in self.iter_cols_in_row(row_idx):
+                result._csr_rows[col_idx] += 1
+
+        convert_counts_to_sum(result._csr_rows)
+
+        counts = [0] * self.ncols() # [col]->num occurences found for col
+        for row_idx in range(self.nrows()):
+            for col_idx, val in self.iter_row(row_idx):
+                col_count = counts[col_idx]
+                counts[col_idx] += 1
+                rows_offset = result._csr_rows[col_idx] + col_count
+                result._csr_cols[rows_offset] = row_idx
+                result._values[rows_offset]   = val
+
+        # Debug
+        expect(result.uncompress() == self.uncompress().transpose(), "Tranpose failed")
+
+        return result
+
 ###############################################################################
 class CSC(CompressedMatrix):
 ###############################################################################
@@ -675,6 +711,14 @@ class PARILUT(object):
         self._A_csr = CSR(src_matrix=A)
         self._L_csr, self._U_csr = self._A_csr.make_lu()
 
+        # params
+        self._fill_in_limit = 0.75
+
+        self._l_nnz_limit = int(math.floor(self._fill_in_limit * self._L_csr.nnz()))
+        self._u_nnz_limit = int(math.floor(self._fill_in_limit * self._U_csr.nnz()))
+
+        print(f"With fill in limit {self._fill_in_limit}, got l_nnz_limit={self._l_nnz_limit} and u_nnz_limit={self._u_nnz_limit}")
+
     ###########################################################################
     def _add_candidates(self, lu):
     ###########################################################################
@@ -696,11 +740,6 @@ class PARILUT(object):
 
         l_new._csr_rows = l_new_rows
         u_new._csr_rows = u_new_rows
-
-        print("L_csr")
-        print(self._L_csr)
-        print("U_csr")
-        print(self._U_csr)
 
         # Debug, expect diagonal non-zero
         for row_idx in range(nrows):
@@ -725,7 +764,8 @@ class PARILUT(object):
                 self._L_csr._csr_rows[row_idx + 1] - 1,  # skip diagonal.
                 self._U_csr._csr_rows[row_idx],
                 self._U_csr._csr_rows[row_idx + 1],
-                (self._L_csr._csr_rows[row_idx] == self._L_csr._csr_rows[row_idx + 1]))
+                False)
+            state.finished_l = state.l_old_begin == state.l_old_end
             return state
 
         def entry_cb(row_idx, col_idx, a_val, lu_val, state):
@@ -796,7 +836,8 @@ class PARILUT(object):
 
         num_rows = self._A_csr.nrows()
         for row in range(num_rows):
-            for l_nz in range(*l_csr.get_nnz_range(row)):
+            nnz_range = l_csr.get_nnz_range(row)
+            for l_nz in range(*(nnz_range[0], nnz_range[1]-1)):
                 col    = l_csr._csr_cols[l_nz]
                 u_diag = u_csc._values[u_csc._csc_cols[col + 1] - 1]
                 if u_diag != 0.0:
@@ -841,7 +882,11 @@ class PARILUT(object):
             print(l_new_csr)
             print(u_new_csr)
 
-            self._compute_l_u_factors(l_new_csr, u_new_csr, CSC(u_new_csr))
+            u_new_csc = CSC(u_new_csr)
+            print("u_new_csc")
+            print(u_new_csc)
+
+            self._compute_l_u_factors(l_new_csr, u_new_csr, u_new_csc)
 
             print("LU factors")
             print(l_new_csr)
@@ -849,11 +894,8 @@ class PARILUT(object):
 
             l_nnz = l_new_csr.nnz()
             u_nnz = u_new_csr.nnz()
-            # JGF assume no fill limits
-            l_nnz_limit = 0
-            u_nnz_limit = 0
-            l_filter_rank = 4 #max(0, l_nnz - l_nnz_limit - 1)
-            u_filter_rank = 4 #max(0, u_nnz - u_nnz_limit - 1)
+            l_filter_rank = max(0, l_nnz - self._l_nnz_limit - 1)
+            u_filter_rank = max(0, u_nnz - self._u_nnz_limit - 1)
 
             # select threshold to remove smallest candidates
             l_threshold = self._threshold_select(l_new_csr, l_filter_rank)
@@ -861,12 +903,12 @@ class PARILUT(object):
 
             # remove smallest candidates from L' and U', storing the
             # results in the original objects
-            self._L_csr = l_new_csr.filter_pred(lambda row, col, val: abs(val) >= l_threshold)
-            self._U_csr = u_new_csr.filter_pred(lambda row, col, val: abs(val) >= u_threshold)
-            expect(self._L_csr.nnz() == l_nnz-l_filter_rank, "Bad filter")
-            expect(self._U_csr.nnz() == u_nnz-u_filter_rank, "Bad filter")
+            self._L_csr = l_new_csr.filter_pred(lambda row, col, val: abs(val) >= l_threshold or row == col)
+            self._U_csr = u_new_csr.filter_pred(lambda row, col, val: abs(val) >= u_threshold or row == col)
+            # expect(self._L_csr.nnz() == l_nnz-l_filter_rank, "Bad filter")
+            # expect(self._U_csr.nnz() == u_nnz-u_filter_rank, "Bad filter")
 
-            print(f"After threshhold {l_threshold}, {u_threshold}")
+            print(f"After ranks {l_filter_rank}, {u_filter_rank} and threshholds {l_threshold}, {u_threshold}")
             print(self._L_csr)
             print(self._U_csr)
 
@@ -877,10 +919,9 @@ class PARILUT(object):
             print(self._U_csr)
 
             converged = self._is_converged()
-            print(f"IT, L nnz: {self._L_csr.nnz()}, U nnz: {self._U_csr.nnz()}")
 
             it += 1
-            expect(it < 100, "Not converging")
+            expect(it < 5, "Not converging")
 
         print(f"Converged in {it} iterations")
 
