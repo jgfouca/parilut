@@ -170,6 +170,11 @@ class SparseMatrix(object):
     ###########################################################################
     def make_lu(self):
     ###########################################################################
+        """
+        Split self into lower and upper triangular matrices. The diagonal vals
+        for L should be 1. The diagonals for U should match what is in self or
+        be 1.0 if self's is zero.
+        """
         l = SparseMatrix(self.nrows(), self.ncols())
         u = SparseMatrix(self.nrows(), self.ncols())
 
@@ -753,13 +758,13 @@ class PARILUT(object):
 
         self._A     = A
         self._A_csr = CSR(src_matrix=A)
-        self._L_csr, self._U_csr = self._A_csr.make_lu()
+        self._L_csr, self._U_csr = self._A_csr.make_lu() # Initial LU approx
 
         # params
         self._fill_in_limit = fill_in_limit
         self._it = it
         self._use_approx_select = use_approx_select
-        expect(not use_approx_select, "use_approx_select is not supported")
+        expect(not use_approx_select, "use_approx_select is not supported") # JGF do we want/need this
 
         self._l_nnz_limit = int(math.floor(self._fill_in_limit * self._L_csr.nnz()))
         self._u_nnz_limit = int(math.floor(self._fill_in_limit * self._U_csr.nnz()))
@@ -856,6 +861,8 @@ class PARILUT(object):
     ###########################################################################
         """
         JGF: why are COO's needed? Looks like maybe they are needed for omp/cuda impls.
+
+        In the paper, this step is called the "fixed-point" iteration
         """
         def compute_sum(row, col):
             # find value from A
@@ -908,10 +915,13 @@ class PARILUT(object):
         """
         This is SLOW and not done in gingko in every iteration.
 
-        R = L*U - A
+        R = A - LU
+
+        There is some repeated calculation here that's also being done in
+        add_candidates.
         """
         LU = self._L_csr * self._U_csr
-        R = LU - self._A_csr
+        R = self._A_csr - LU
 
         print("Residual")
         print(R)

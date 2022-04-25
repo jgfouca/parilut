@@ -19,6 +19,9 @@ OR
 \033[1mEXAMPLES:\033[0m
     \033[1;32m# Run parilut on a 30x40 matrix with 20% non-zero entries \033[0m
     > {0} 30 40 20
+
+    \033[1;32m# Run with hardcoded matrix 0 \033[0m
+    > {0} 10 10 10 -c 0  # The 10's are ignored. the dims of the harcoded mtx are followed
 """.format(pathlib.Path(args[0]).name),
         description=description,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
