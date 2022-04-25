@@ -130,17 +130,27 @@ class SparseMatrix(object):
     ###########################################################################
     def __mul__(self, rhs):
     ###########################################################################
-        expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
+        if isinstance(rhs, SparseMatrix):
+            expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
 
-        result = SparseMatrix(self.nrows(), rhs.ncols())
+            result = SparseMatrix(self.nrows(), rhs.ncols())
 
-        for i in range(self.nrows()):
-            for j in range(rhs.ncols()):
-                curr_sum = 0.0
-                for k in range(self.ncols()):
-                    curr_sum += (self[i][k] * rhs[k][j])
+            for i in range(self.nrows()):
+                for j in range(rhs.ncols()):
+                    curr_sum = 0.0
+                    for k in range(self.ncols()):
+                        curr_sum += (self[i][k] * rhs[k][j])
 
-                result[i][j] = curr_sum
+                    result[i][j] = curr_sum
+
+        else:
+            expect(isinstance(rhs, float), "Expected either SparseMatrix or scalar float rhs for __mul__")
+
+            result = SparseMatrix(self.nrows(), self.ncols())
+
+            for i in range(self.nrows()):
+                for j in range(self.ncols()):
+                    result[i][j] = self[i][j]*rhs
 
         return result
 
@@ -272,6 +282,13 @@ class CSR(CompressedMatrix):
     ###########################################################################
         expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
         return zip(self.iter_cols_in_row(row_idx), self.iter_vals_in_row(row_idx))
+
+    ###########################################################################
+    def __iter__(self):
+    ###########################################################################
+        for row_idx in range(self.nrows()):
+            for col_idx, val in self.iter_row(row_idx):
+                yield row_idx, col_idx, val
 
     ###########################################################################
     def has(self, row_idx, col_idx_arg):
@@ -430,7 +447,7 @@ class CSR(CompressedMatrix):
         return csr_rows[-1]
 
     ###########################################################################
-    def __add__(self, rhs):
+    def _add_impl(self, rhs, scale=1.):
     ###########################################################################
         """
         Sparse general matrix-matrix addition (spgeam)
@@ -445,7 +462,7 @@ class CSR(CompressedMatrix):
         begin_row_cb = lambda x : x
         def entry_cb(row_idx, col_idx, a_val, b_val, _):
             result._csr_cols[result._ncols] = col_idx
-            result._values[result._ncols] = a_val + b_val
+            result._values[result._ncols] = a_val + (b_val * scale)
             result._ncols += 1
 
         self.abstract_spgeam(rhs, begin_row_cb, entry_cb)
@@ -454,10 +471,20 @@ class CSR(CompressedMatrix):
 
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
-        uresult = uself + urhs
-        expect(uresult == result.uncompress(), "CSR addition does not work")
+        uresult = uself + (urhs*scale)
+        expect(uresult == result.uncompress(), f"CSR addition does not work for:\n{self}\n{rhs}")
 
         return result
+
+    ###########################################################################
+    def __add__(self, rhs):
+    ###########################################################################
+        return self._add_impl(rhs)
+
+    ###########################################################################
+    def __sub__(self, rhs):
+    ###########################################################################
+        return self._add_impl(rhs, scale=-1.)
 
     ###########################################################################
     def _spgemm_insert_row2(self, cols, a, b, row_idx):
@@ -567,8 +594,7 @@ class CSR(CompressedMatrix):
         """
         What does sorting a matrix even mean?
         """
-        expect(False, "No yet implemented")
-
+        expect(False, "Not yet implemented")
 
     ###########################################################################
     def transpose(self):
@@ -703,7 +729,7 @@ class PARILUT(object):
 ###############################################################################
 
     ###########################################################################
-    def __init__(self, A, fill_in_limit=0.75, it=5):
+    def __init__(self, A, fill_in_limit=0.75, it=5, use_approx_select=False):
     ###########################################################################
         expect(A.nrows() == A.ncols(), "PARILUT matrix must be square")
 
@@ -714,11 +740,13 @@ class PARILUT(object):
         # params
         self._fill_in_limit = fill_in_limit
         self._it = it
+        self._use_approx_select = use_approx_select
+        expect(not use_approx_select, "use_approx_select is not supported")
 
         self._l_nnz_limit = int(math.floor(self._fill_in_limit * self._L_csr.nnz()))
         self._u_nnz_limit = int(math.floor(self._fill_in_limit * self._U_csr.nnz()))
 
-        print(f"With fill in limit {self._fill_in_limit}, got l_nnz_limit={self._l_nnz_limit} and u_nnz_limit={self._u_nnz_limit}")
+        self._prev_residual_norm = None
 
     ###########################################################################
     def _add_candidates(self, lu):
@@ -746,6 +774,8 @@ class PARILUT(object):
         for row_idx in range(nrows):
             expect(self._L_csr.has(row_idx, row_idx),
                    f"No diagonal in L_csr[{row_idx}][{row_idx}]")
+            expect(self._U_csr.has(row_idx, row_idx),
+                   f"No diagonal in U_csr[{row_idx}][{row_idx}]")
 
         @dataclass
         class RowState:
@@ -855,6 +885,38 @@ class PARILUT(object):
         expect(u_csr.uncompress() == u_csc.uncompress(), "Bad compute_l_u_factors")
 
     ###########################################################################
+    def _compute_residual_norm(self):
+    ###########################################################################
+        """
+        This is SLOW and not done in gingko in every iteration.
+
+        R = L*U - A
+        """
+        LU = self._L_csr * self._U_csr
+        R = LU - self._A_csr
+
+        print("Residual")
+        print(R)
+
+        # Get residual norm
+        residual_norm = 0.
+        ait = iter(self._A_csr)
+        arow_idx, acol_idx, _ = ait.__next__()
+        for row_idx, col_idx, val in R:
+            if row_idx == arow_idx and col_idx == acol_idx:
+                residual_norm += val*val
+                try:
+                    arow_idx, acol_idx, _ = ait.__next__()
+                except StopIteration:
+                    arow_idx, acol_idx, _ = None, None, None
+
+        residual_norm = math.sqrt(residual_norm)
+
+        print(f"Residual norm = {residual_norm}")
+
+        return residual_norm
+
+    ###########################################################################
     def _threshold_select(self, m, idx):
     ###########################################################################
         values_cp = list(m._values)
@@ -862,16 +924,26 @@ class PARILUT(object):
         return abs(values_cp[idx])
 
     ###########################################################################
-    def _is_converged(self, it):
+    def _is_converged(self):
     ###########################################################################
-        return it >= self._it
+        curr_residual = self._compute_residual_norm()
+        if self._prev_residual_norm is None:
+            self._prev_residual_norm = curr_residual
+            return False
+        else:
+            curr_diff = self._prev_residual_norm - curr_residual
+            if curr_diff == 0.0:
+                return True
+            else:
+                self._prev_residual_norm = curr_residual
+                return False
 
     ###########################################################################
     def main(self):
     ###########################################################################
         converged = False
         it = 0
-        while not converged:
+        while it < self._it and not converged:
             LU_csr = self._L_csr * self._U_csr
             print("LU")
             print(LU_csr)
@@ -917,9 +989,12 @@ class PARILUT(object):
             print(self._U_csr)
 
             it += 1
-            converged = self._is_converged(it)
+            converged = self._is_converged()
 
-        print(f"Converged in {it} iterations")
+        if converged:
+            print(f"Converged in {it} iterations")
+        else:
+            expect(False, f"Did not converge in {it} iterations")
 
     ###########################################################################
     def check_hc_result(self, matrix_id):
