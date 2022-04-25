@@ -17,7 +17,7 @@ OR
 {0} --help
 
 \033[1mEXAMPLES:\033[0m
-    \033[1;32m# Run parilut on a 30x40 matrix with 20% non-zero entries \033[0m
+    \033[1;32m# Run parilut on a 30x40 matrix with 20%% non-zero entries \033[0m
     > {0} 30 40 20
 
     \033[1;32m# Run with hardcoded matrix 0 \033[0m
