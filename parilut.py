@@ -16,6 +16,16 @@ def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
 ###############################################################################
 def convert_counts_to_sum(the_list):
 ###############################################################################
+    """
+    Convert a list of ints into a running sum and return the total sum
+
+    >>> l = [1, 0, 3, 2, 0]
+    >>> convert_counts_to_sum(l)
+    6
+    >>> l
+    [0, 1, 1, 4, 6]
+    """
+    expect(the_list[-1] == 0, "Last entry should be empty")
     curr_sum = 0
     for idx, count in enumerate(the_list):
         the_list[idx] = curr_sum
@@ -54,6 +64,9 @@ class SparseMatrix(object):
     @staticmethod
     def get_hardcode(matrix_id):
     ###########################################################################
+        """
+        Hardcoded matrices for testing
+        """
         if matrix_id == 0:
             hardcoded_vals = [
                 [1.,   6.,   4., 7.],
@@ -203,7 +216,7 @@ class SparseMatrix(object):
     ###########################################################################
     def transpose(self):
     ###########################################################################
-        result = SparseMatrix(self.nrows(), self.ncols())
+        result = SparseMatrix(self.ncols(), self.nrows())
 
         for i in range(self.nrows()):
             for j in range(self.ncols()):
@@ -214,6 +227,9 @@ class SparseMatrix(object):
 ###############################################################################
 class CompressedMatrix(object):
 ###############################################################################
+    """
+    Abstract base class for compressed matrix implementations
+    """
 
     def __init__(self, nrows, ncols, nnz):
         self._nrows, self._ncols = nrows, ncols
@@ -233,6 +249,9 @@ class CompressedMatrix(object):
 ###############################################################################
 class CSR(CompressedMatrix):
 ###############################################################################
+    """
+    Compressed sparse row matrix implementation
+    """
 
     ###########################################################################
     def __init__(self, nrows=0, ncols=0, nnz=0, src_matrix=None):
@@ -567,8 +586,7 @@ class CSR(CompressedMatrix):
                 if pred(row_idx, col_idx, val):
                     result._csr_rows[row_idx] += 1
 
-        convert_counts_to_sum(result._csr_rows)
-        nnz = result._csr_rows[-1]
+        nnz = convert_counts_to_sum(result._csr_rows)
 
         result._values = [0.0] * nnz
         result._csr_cols = [0] * nnz
@@ -837,7 +855,7 @@ class PARILUT(object):
     def _compute_l_u_factors(self, l_csr, u_csr, u_csc):
     ###########################################################################
         """
-        JGF: why are COO's needed?
+        JGF: why are COO's needed? Looks like maybe they are needed for omp/cuda impls.
         """
         def compute_sum(row, col):
             # find value from A
