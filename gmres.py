@@ -8,32 +8,58 @@ class GMRES(object):
 ###############################################################################
 
     ###########################################################################
-    def __init__(self, A, fill_in_limit=0.75, it=5, use_approx_select=False):
+    def __init__(self, A, f, it=5):
     ###########################################################################
         expect(A.nrows() == A.ncols(), "GMRES matrix must be square")
 
         self._A     = A
         self._A_csr = CSR(src_matrix=A)
-        self._L_csr, self._U_csr = self._A_csr.make_lu() # Initial LU approx
+        self._f     = f
+        self._x     = SparseMatrix(A.nrows(), 1)
 
         # params
-        self._fill_in_limit = fill_in_limit
         self._it = it
-        self._use_approx_select = use_approx_select
-        expect(not use_approx_select, "use_approx_select is not supported") # JGF do we want/need this
-
-        self._l_nnz_limit = int(math.floor(self._fill_in_limit * self._L_csr.nnz()))
-        self._u_nnz_limit = int(math.floor(self._fill_in_limit * self._U_csr.nnz()))
-
-        self._prev_residual_norm = None
 
     ###########################################################################
     def main(self):
     ###########################################################################
         converged = False
         it = 0
+
+        h = SparseMatrix(self._A.nrows(), self._A.ncols())
+        v = SparseMatrix(self._A.nrows(), self._A.ncols())
+
         while it < self._it and not converged:
-            continue
+            # Start
+            r = self._f - (self._A * self._x)
+            v.set_column(0, r.normalized())
+
+            # Iterate
+            for j in range(self._A.ncols()-1): # Not sure about this range
+
+                Avj = self._A * v.get_column(j)
+
+                # Build hessenberg matrix
+                for i in range(j+1):
+                    h[i][j] = Avj.dot_product(v.get_column(i))
+
+                sum_ =  v.get_column(0) * h[0][j]
+                for i in range(1, j+1):
+                    sum_ += v.get_column(i) * h[i][j]
+
+                v_next_col = Avj - sum_
+
+                h[j+1][j] = v_next_col.eucl_norm()
+                v.set_column(j+1, v_next_col.normalized())
+
+            # Form approximate solution
+            print(f"H is:\n{h}")
+
+            Q, R = h.get_QR_fact()
+            y = 4
+
+            it += 1
+            converged = True
 
         if converged:
             print(f"Converged in {it} iterations")
@@ -89,13 +115,19 @@ def gmres(rows, cols, pct_nz, seed, hardcoded):
     try:
         if hardcoded is not None:
             A = SparseMatrix.get_hardcode(hardcoded)
+            f = SparseMatrix.get_hardcode(hardcoded)
         else:
-            A = SparseMatrix(rows, cols, pct_nz)
+            A = SparseMatrix(rows, cols, pct_nz=pct_nz)
+            f = SparseMatrix(rows, 1,    pct_nz=pct_nz)
+            print(f"JGF\n{f} {pct_nz}")
+            f = f.normalized()
 
-        print("Original matrix")
+        print("A")
         print(A)
+        print("f")
+        print(f)
 
-        gmr = GMRES(A)
+        gmr = GMRES(A, f)
 
         gmr.main()
 

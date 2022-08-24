@@ -1,5 +1,5 @@
 
-import random, sys
+import random, sys, math
 
 ###############################################################################
 def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
@@ -11,6 +11,11 @@ def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
     if not condition:
         msg = error_prefix + " " + error_msg
         raise exc_type(msg)
+
+###############################################################################
+def near(val1, val2, abs_tol=1e-10):
+###############################################################################
+    return math.isclose(val1, val2, abs_tol=abs_tol)
 
 ###############################################################################
 def convert_counts_to_sum(the_list):
@@ -56,9 +61,11 @@ class SparseMatrix(object):
         # Non-zero matrix must have at least 1 value in each row and col
         # so make unit diagonal
         if pct_nz > 0:
-            for i in range(rows):
-                self[i][i] = 1.0
-
+            if rows == cols:
+                for i in range(rows):
+                    self[i][i] = 1.0
+            else:
+                self[0][0] = random.uniform(0.0, 1.0)
     ###########################################################################
     @staticmethod
     def get_hardcode(matrix_id):
@@ -136,6 +143,20 @@ class SparseMatrix(object):
         for i in range(self.nrows()):
             for j in range(self.ncols()):
                 result[i][j] = self[i][j] + rhs[i][j]
+
+        return result
+
+    ###########################################################################
+    def __sub__(self, rhs):
+    ###########################################################################
+        expect(self.nrows() == rhs.nrows(), "Cannot subtract matrix, incompatible dims")
+        expect(self.ncols() == rhs.ncols(), "Cannot subtract matrix, incompatible dims")
+
+        result = SparseMatrix(self.nrows(), self.ncols())
+
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                result[i][j] = self[i][j] - rhs[i][j]
 
         return result
 
@@ -225,6 +246,184 @@ class SparseMatrix(object):
         for i in range(self.nrows()):
             for j in range(self.ncols()):
                 result[j][i] = self[i][j]
+
+        return result
+
+    ###########################################################################
+    def normalized(self):
+    ###########################################################################
+        expect(self.ncols() == 1, "Normalize only works on vectors")
+
+        result = SparseMatrix(self.nrows(), 1)
+
+        enorm = self.eucl_norm()
+
+        for i in range(self.nrows()):
+            result[i][0] = self[i][0] / enorm
+
+        expect(near(result.length(), 1.0), f"Normalize did not produce unit vector? Length is {self.length()}")
+
+        return result
+
+    ###########################################################################
+    def length(self):
+    ###########################################################################
+        expect(self.ncols() == 1, "Length only works on vectors")
+
+        result = 0
+        for i in range(self.nrows()):
+            result += self[i][0]*self[i][0]
+
+        return math.sqrt(result)
+
+    ###########################################################################
+    def eucl_norm(self):
+    ###########################################################################
+        expect(self.ncols() == 1, "Euclidean norm only works on vectors")
+
+        return math.sqrt(self.dot_product(self))
+
+    ###########################################################################
+    def dot_product(self, rhs):
+    ###########################################################################
+        expect(self.ncols() == 1, "Dot product only works on vectors")
+        expect(rhs.ncols()  == 1, "Dot product only works on vectors")
+        expect(self.nrows() == rhs.nrows(), "Incompatible vectors for dot product")
+
+        result = 0
+        for i in range(self.nrows()):
+            result += (self[i][0]*rhs[i][0])
+
+        return result
+
+    ###########################################################################
+    def set_column(self, col_idx, vector):
+    ###########################################################################
+        expect(self.nrows() == vector.nrows(), "set_column vector incompatible")
+        expect(vector.ncols() == 1, "set_column takes a vector")
+        expect(col_idx < self.ncols(), "col_idx is beyond matrix")
+
+        for i in range(self.nrows()):
+            self[i][col_idx] = vector[i][0]
+
+    ###########################################################################
+    def get_column(self, col_idx):
+    ###########################################################################
+        expect(col_idx < self.ncols(), "col_idx is beyond matrix")
+
+        result = SparseMatrix(self.nrows(), 1)
+
+        for i in range(self.nrows()):
+            result[i][0] = self[i][col_idx]
+
+        return result
+
+    ###########################################################################
+    def projection(self, u, a):
+    ###########################################################################
+        num = u.dot_product(a)
+        den = u.dot_product(u)
+
+        return u*(num/den)
+
+    ###########################################################################
+    def get_QR_fact(self):
+    ###########################################################################
+        """
+        Gram-Schmidt QR factorization
+        """
+
+        U = SparseMatrix(self.nrows(), self.ncols())
+        Q = SparseMatrix(self.nrows(), self.ncols())
+        R = SparseMatrix(self.nrows(), self.ncols())
+
+        for i in range(self.nrows()):
+            a_i = self.get_column(i)
+            u_i = self.get_column(i)
+            for j in range(i):
+                u_i -= self.projection(U.get_column(j), a_i)
+
+            U.set_column(i, u_i)
+
+            Q.set_column(i, u_i.normalized())
+
+        R = Q.transpose() * self
+        expect(R.is_upper(), f"R should be an upper triangular matrix, it is: {R}")
+
+        return Q, R
+
+    ###########################################################################
+    def is_upper(self):
+    ###########################################################################
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                if i > j and not near(self[i][j], 0.0):
+                    return False
+
+        return True
+
+    ###########################################################################
+    def is_identity(self):
+    ###########################################################################
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                if i == j:
+                    if not near(self[i][j], 1.0):
+                        return False
+                else:
+                    if not near(self[i][j], 0.0):
+                        return False
+
+        return True
+
+    ###########################################################################
+    def scale_row(self, row_idx, scale):
+    ###########################################################################
+        for j in range(self.ncols()):
+            self[row_idx][j] *= scale
+
+    ###########################################################################
+    def add_rows(self, src_row, tgt_row, scale):
+    ###########################################################################
+        for j in range(self.ncols()):
+            self[tgt_row][j] += (scale * self[src_row][j])
+
+    ###########################################################################
+    def inverse(self):
+    ###########################################################################
+        expect(self.nrows() == self.ncols(), "Inverse only works for square matrices")
+        expect(self.is_upper(), "Inverse is for upper triangular matrices only")
+
+        result = SparseMatrix(self.nrows(), self.ncols())
+        orig   = SparseMatrix(self.nrows(), self.ncols())
+
+        # Copy
+        for i in range(self.nrows()):
+            for j in range(self.ncols()):
+                orig[i][j] = self[i][j]
+
+        # Set result to identity matrix
+        for i in range(self.nrows()):
+            result[i][i] = 1
+
+        # Get 1's in diagonals
+        for i in range(self.nrows()):
+            orig_diag = orig[i][i]
+            if orig_diag != 1.0 and orig_diag != 0:
+                scale = 1/orig[i][i]
+                orig.scale_row(i, scale)
+                result.scale_row(i, scale)
+
+        # Get zeros in non-diagonals
+        for i in range(self.nrows()):
+            for j in range(i):
+                if not near(orig[j][i], 0):
+                    scale = -orig[j][i]
+                    orig.add_rows(i, j, scale)
+                    result.add_rows(i, j, scale)
+
+        expect(orig.is_identity(), "Orig did not become identity")
+        expect((self * result).is_identity(), "Result is not inverse")
 
         return result
 
