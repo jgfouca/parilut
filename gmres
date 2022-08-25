@@ -37,6 +37,8 @@ OR
 
     parser.add_argument("-c", "--hardcoded", type=int, help="Use a hardcoded matrix.")
 
+    parser.add_argument("-d", "--debug", action="store_true", help="Launch pdb upon assertion failure.")
+
     return parser.parse_args(args[1:])
 
 ###############################################################################

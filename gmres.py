@@ -1,7 +1,7 @@
 
 import random, sys, math
 
-from common import expect, SparseMatrix, CSR
+from common import expect, SparseMatrix, CSR, enable_debug, get_basis_vector
 
 ###############################################################################
 class GMRES(object):
@@ -26,8 +26,10 @@ class GMRES(object):
         converged = False
         it = 0
 
-        h = SparseMatrix(self._A.nrows(), self._A.ncols())
-        v = SparseMatrix(self._A.nrows(), self._A.ncols())
+        n = self._A.nrows()
+        k = n # Number of arnoldi steps, what to pick for this?
+        h = SparseMatrix(k+1, k)
+        v = SparseMatrix(n, k+1)
 
         while it < self._it and not converged:
             # Start
@@ -35,7 +37,7 @@ class GMRES(object):
             v.set_column(0, r.normalized())
 
             # Iterate
-            for j in range(self._A.ncols()-1): # Not sure about this range
+            for j in range(k): # Not sure about this range
 
                 Avj = self._A * v.get_column(j)
 
@@ -56,10 +58,19 @@ class GMRES(object):
             print(f"H is:\n{h}")
 
             Q, R = h.get_QR_fact()
-            y = 4
+            print(f"Q is:\n{h}\nR is:\n{R}")
+            B = r.eucl_norm()
+            y = (R.inverse() * B) * Q.transpose() * get_basis_vector(k+1, 0)
+
+            self._x = self._x + (v * y)
+            print(f"New x is:\n{self._x}")
+
+            r = self._f - (self._A * self._x)
+            print(f"Residual norm is {r.eucl_norm()} with r:\n{r}")
+            # How to know if satisfied?
 
             it += 1
-            converged = True
+            converged = False
 
         if converged:
             print(f"Converged in {it} iterations")
@@ -99,12 +110,15 @@ class GMRES(object):
         print(f"hardcoded result {matrix_id} check passed.")
 
 ###############################################################################
-def gmres(rows, cols, pct_nz, seed, hardcoded):
+def gmres(rows, cols, pct_nz, seed, hardcoded, debug):
 ###############################################################################
     expect(rows > 0, f"Bad rows {rows}")
     expect(cols > 0, f"Bad cols {rows}")
     expect(rows == cols, f"{rows} != {cols}. Only square matrices allowed")
     expect(pct_nz > 0 and pct_nz <= 100, f"Bad pct_nz {pct_nz}")
+
+    if debug:
+        enable_debug()
 
     if seed is not None:
         random.seed(seed)
@@ -114,12 +128,10 @@ def gmres(rows, cols, pct_nz, seed, hardcoded):
 
     try:
         if hardcoded is not None:
-            A = SparseMatrix.get_hardcode(hardcoded)
-            f = SparseMatrix.get_hardcode(hardcoded)
+            A, f = SparseMatrix.get_hardcode_gmres(hardcoded)
         else:
             A = SparseMatrix(rows, cols, pct_nz=pct_nz)
             f = SparseMatrix(rows, 1,    pct_nz=pct_nz)
-            print(f"JGF\n{f} {pct_nz}")
             f = f.normalized()
 
         print("A")

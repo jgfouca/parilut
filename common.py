@@ -1,6 +1,16 @@
 
 import random, sys, math
 
+_DEBUG = False
+###############################################################################
+def enable_debug():
+###############################################################################
+    """
+    Drop into pdb if requires fail
+    """
+    global _DEBUG
+    _DEBUG = True
+
 ###############################################################################
 def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
 ###############################################################################
@@ -11,6 +21,21 @@ def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
     if not condition:
         msg = error_prefix + " " + error_msg
         raise exc_type(msg)
+
+###############################################################################
+def require(condition, error_msg, exc_type=RuntimeError, error_prefix="ERROR:"):
+###############################################################################
+    """
+    Similar to assert except uses proper function syntax. Useful for
+    checking programming error.
+    """
+    global _DEBUG
+    if _DEBUG:
+        if not condition:
+            import pdb
+            pdb.set_trace()
+    else:
+        expect(condition, error_msg, exc_type=exc_type, error_prefix=error_prefix)
 
 ###############################################################################
 def near(val1, val2, abs_tol=1e-10):
@@ -29,13 +54,20 @@ def convert_counts_to_sum(the_list):
     >>> l
     [0, 1, 1, 4, 6]
     """
-    expect(the_list[-1] == 0, "Last entry should be empty")
+    require(the_list[-1] == 0, "Last entry should be empty")
     curr_sum = 0
     for idx, count in enumerate(the_list):
         the_list[idx] = curr_sum
         curr_sum += count
 
     return curr_sum
+
+###############################################################################
+def get_basis_vector(nrows, col_idx):
+###############################################################################
+    result = SparseMatrix(nrows, 1)
+    result[col_idx][0] = 1
+    return result
 
 ###############################################################################
 class SparseMatrix(object):
@@ -66,6 +98,7 @@ class SparseMatrix(object):
                     self[i][i] = 1.0
             else:
                 self[0][0] = random.uniform(0.0, 1.0)
+
     ###########################################################################
     @staticmethod
     def get_hardcode(matrix_id):
@@ -90,6 +123,36 @@ class SparseMatrix(object):
             expect(False, f"Unknown hardcoded matrix id {matrix_id}")
 
         return None
+
+    ###########################################################################
+    @staticmethod
+    def get_hardcode_gmres(matrix_id):
+    ###########################################################################
+        """
+        Hardcoded matrices for testing
+        """
+        if matrix_id == 0:
+            n = 3
+            hardcoded_vals = [
+                [1., 0., 0.],
+                [0., 2., 0.],
+                [0., 0., 3.],
+            ]
+            result = SparseMatrix(n, n)
+            for row_idx in range(n):
+                for col_idx in range(n):
+                    result[row_idx][col_idx] = hardcoded_vals[row_idx][col_idx]
+
+            result_v = SparseMatrix(n, 1)
+            for row_idx in range(n):
+                result_v[row_idx][0] = 1
+
+            return result, result_v
+        else:
+            expect(False, f"Unknown hardcoded matrix id {matrix_id}")
+
+        return None
+
 
     ###########################################################################
     def __str__(self):
@@ -135,8 +198,8 @@ class SparseMatrix(object):
     ###########################################################################
     def __add__(self, rhs):
     ###########################################################################
-        expect(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
-        expect(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
+        require(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
+        require(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
 
         result = SparseMatrix(self.nrows(), self.ncols())
 
@@ -149,8 +212,8 @@ class SparseMatrix(object):
     ###########################################################################
     def __sub__(self, rhs):
     ###########################################################################
-        expect(self.nrows() == rhs.nrows(), "Cannot subtract matrix, incompatible dims")
-        expect(self.ncols() == rhs.ncols(), "Cannot subtract matrix, incompatible dims")
+        require(self.nrows() == rhs.nrows(), "Cannot subtract matrix, incompatible dims")
+        require(self.ncols() == rhs.ncols(), "Cannot subtract matrix, incompatible dims")
 
         result = SparseMatrix(self.nrows(), self.ncols())
 
@@ -164,7 +227,8 @@ class SparseMatrix(object):
     def __mul__(self, rhs):
     ###########################################################################
         if isinstance(rhs, SparseMatrix):
-            expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
+            require(self.ncols() == rhs.nrows(),
+                    f"Cannot multiply matrix, incompatible dims. LHS cols={self.ncols()}, RHS rows={rhs.nrows()}")
 
             result = SparseMatrix(self.nrows(), rhs.ncols())
 
@@ -177,7 +241,7 @@ class SparseMatrix(object):
                     result[i][j] = curr_sum
 
         else:
-            expect(isinstance(rhs, float), "Expected either SparseMatrix or scalar float rhs for __mul__")
+            require(isinstance(rhs, float), "Expected either SparseMatrix or scalar float rhs for __mul__")
 
             result = SparseMatrix(self.nrows(), self.ncols())
 
@@ -252,23 +316,24 @@ class SparseMatrix(object):
     ###########################################################################
     def normalized(self):
     ###########################################################################
-        expect(self.ncols() == 1, "Normalize only works on vectors")
+        require(self.ncols() == 1, "Normalize only works on vectors")
 
         result = SparseMatrix(self.nrows(), 1)
 
         enorm = self.eucl_norm()
+        require(enorm != 0, f"Got zero euclidean norm for {self}")
 
         for i in range(self.nrows()):
             result[i][0] = self[i][0] / enorm
 
-        expect(near(result.length(), 1.0), f"Normalize did not produce unit vector? Length is {self.length()}")
+        require(near(result.length(), 1.0), f"Normalize did not produce unit vector? Length is {self.length()}")
 
         return result
 
     ###########################################################################
     def length(self):
     ###########################################################################
-        expect(self.ncols() == 1, "Length only works on vectors")
+        require(self.ncols() == 1, "Length only works on vectors")
 
         result = 0
         for i in range(self.nrows()):
@@ -279,16 +344,16 @@ class SparseMatrix(object):
     ###########################################################################
     def eucl_norm(self):
     ###########################################################################
-        expect(self.ncols() == 1, "Euclidean norm only works on vectors")
+        require(self.ncols() == 1, "Euclidean norm only works on vectors")
 
         return math.sqrt(self.dot_product(self))
 
     ###########################################################################
     def dot_product(self, rhs):
     ###########################################################################
-        expect(self.ncols() == 1, "Dot product only works on vectors")
-        expect(rhs.ncols()  == 1, "Dot product only works on vectors")
-        expect(self.nrows() == rhs.nrows(), "Incompatible vectors for dot product")
+        require(self.ncols() == 1, "Dot product only works on vectors")
+        require(rhs.ncols()  == 1, "Dot product only works on vectors")
+        require(self.nrows() == rhs.nrows(), "Incompatible vectors for dot product")
 
         result = 0
         for i in range(self.nrows()):
@@ -299,9 +364,9 @@ class SparseMatrix(object):
     ###########################################################################
     def set_column(self, col_idx, vector):
     ###########################################################################
-        expect(self.nrows() == vector.nrows(), "set_column vector incompatible")
-        expect(vector.ncols() == 1, "set_column takes a vector")
-        expect(col_idx < self.ncols(), "col_idx is beyond matrix")
+        require(self.nrows() == vector.nrows(), "set_column vector incompatible")
+        require(vector.ncols() == 1, "set_column takes a vector")
+        require(col_idx < self.ncols(), "col_idx is beyond matrix")
 
         for i in range(self.nrows()):
             self[i][col_idx] = vector[i][0]
@@ -309,7 +374,7 @@ class SparseMatrix(object):
     ###########################################################################
     def get_column(self, col_idx):
     ###########################################################################
-        expect(col_idx < self.ncols(), "col_idx is beyond matrix")
+        require(col_idx < self.ncols(), "col_idx is beyond matrix")
 
         result = SparseMatrix(self.nrows(), 1)
 
@@ -337,7 +402,7 @@ class SparseMatrix(object):
         Q = SparseMatrix(self.nrows(), self.ncols())
         R = SparseMatrix(self.nrows(), self.ncols())
 
-        for i in range(self.nrows()):
+        for i in range(self.ncols()):
             a_i = self.get_column(i)
             u_i = self.get_column(i)
             for j in range(i):
@@ -348,7 +413,7 @@ class SparseMatrix(object):
             Q.set_column(i, u_i.normalized())
 
         R = Q.transpose() * self
-        expect(R.is_upper(), f"R should be an upper triangular matrix, it is: {R}")
+        require(R.is_upper(), f"R should be an upper triangular matrix, it is:\n{R}")
 
         return Q, R
 
@@ -391,8 +456,8 @@ class SparseMatrix(object):
     ###########################################################################
     def inverse(self):
     ###########################################################################
-        expect(self.nrows() == self.ncols(), "Inverse only works for square matrices")
-        expect(self.is_upper(), "Inverse is for upper triangular matrices only")
+        require(self.nrows() == self.ncols(), "Inverse only works for square matrices")
+        require(self.is_upper(), "Inverse is for upper triangular matrices only")
 
         result = SparseMatrix(self.nrows(), self.ncols())
         orig   = SparseMatrix(self.nrows(), self.ncols())
@@ -422,8 +487,8 @@ class SparseMatrix(object):
                     orig.add_rows(i, j, scale)
                     result.add_rows(i, j, scale)
 
-        expect(orig.is_identity(), "Orig did not become identity")
-        expect((self * result).is_identity(), "Result is not inverse")
+        require(orig.is_identity(), "Orig did not become identity")
+        require((self * result).is_identity(), "Result is not inverse")
 
         return result
 
@@ -447,7 +512,7 @@ class CompressedMatrix(object):
 
     def nnz(self): return len(self._values)
 
-    def uncompress(self): expect(False, "Subclass should implement")
+    def uncompress(self): require(False, "Subclass should implement")
 
 ###############################################################################
 class CSR(CompressedMatrix):
@@ -460,7 +525,7 @@ class CSR(CompressedMatrix):
     def __init__(self, nrows=0, ncols=0, nnz=0, src_matrix=None):
     ###########################################################################
         if src_matrix is not None:
-            expect(nrows == 0 and ncols == 0 and nnz == 0, "Do not use with src_matrix")
+            require(nrows == 0 and ncols == 0 and nnz == 0, "Do not use with src_matrix")
             nrows, ncols, nnz = src_matrix.nrows(), src_matrix.ncols(), src_matrix.nnz()
 
         super().__init__(nrows, ncols, nnz)
@@ -479,30 +544,30 @@ class CSR(CompressedMatrix):
 
                 self._csr_rows[row_idx+1] = nnz
 
-            expect(self.uncompress() == src_matrix, "CSR compression failed")
+            require(self.uncompress() == src_matrix, "CSR compression failed")
 
     ###########################################################################
     def get_nnz_range(self, row_idx):
     ###########################################################################
-        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        require(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
         return self._csr_rows[row_idx], self._csr_rows[row_idx+1]
 
     ###########################################################################
     def iter_cols_in_row(self, row_idx):
     ###########################################################################
-        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        require(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
         return iter(self._csr_cols[slice(*self.get_nnz_range(row_idx))])
 
     ###########################################################################
     def iter_vals_in_row(self, row_idx):
     ###########################################################################
-        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        require(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
         return iter(self._values[slice(*self.get_nnz_range(row_idx))])
 
     ###########################################################################
     def iter_row(self, row_idx):
     ###########################################################################
-        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        require(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
         return zip(self.iter_cols_in_row(row_idx), self.iter_vals_in_row(row_idx))
 
     ###########################################################################
@@ -515,7 +580,7 @@ class CSR(CompressedMatrix):
     ###########################################################################
     def has(self, row_idx, col_idx_arg):
     ###########################################################################
-        expect(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
+        require(row_idx < self.nrows(), f"Bad row_idx: {row_idx}")
         # Slow but that's OK for now
         for col_idx in self.iter_cols_in_row(row_idx):
             if col_idx == col_idx_arg:
@@ -544,7 +609,7 @@ class CSR(CompressedMatrix):
             result = False
 
         # Debug check
-        expect(result == (self.uncompress() == rhs.uncompress()), "csr eq failed")
+        require(result == (self.uncompress() == rhs.uncompress()), "csr eq failed")
 
         return result
 
@@ -601,16 +666,16 @@ class CSR(CompressedMatrix):
         # Debug
         uself = self.uncompress()
         ul, uu = uself.make_lu()
-        expect(l.uncompress() == ul, "make_lu failed for u")
-        expect(u.uncompress() == uu, "make_lu failed for u")
+        require(l.uncompress() == ul, "make_lu failed for u")
+        require(u.uncompress() == uu, "make_lu failed for u")
 
         return l, u
 
     ###########################################################################
     def abstract_spgeam(self, rhs, begin_row_cb, entry_cb):
     ###########################################################################
-        expect(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
-        expect(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
+        require(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
+        require(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
 
         for row_idx in range(self.nrows()):
             a_begin, a_end = self.get_nnz_range(row_idx)
@@ -694,7 +759,7 @@ class CSR(CompressedMatrix):
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
         uresult = uself + (urhs*scale)
-        expect(uresult == result.uncompress(), f"CSR addition does not work for:\n{self}\n{rhs}")
+        require(uresult == result.uncompress(), f"CSR addition does not work for:\n{self}\n{rhs}")
 
         return result
 
@@ -730,7 +795,7 @@ class CSR(CompressedMatrix):
         """
         Sparse general matrix-matrix multiplication (spgemm)
         """
-        expect(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
+        require(self.ncols() == rhs.nrows(), "Cannot multiply matrix, incompatible dims")
 
         result = CSR(self.nrows(), rhs.ncols())
 
@@ -743,7 +808,7 @@ class CSR(CompressedMatrix):
         # build row pointers
         nnz = convert_counts_to_sum(result._csr_rows)
 
-        expect(len(result._csr_rows) == self.nrows() + 1, "Bad csr_rows")
+        require(len(result._csr_rows) == self.nrows() + 1, "Bad csr_rows")
 
         # second sweep: accumulate non-zeros
         result._csr_cols = [0] * nnz
@@ -763,7 +828,7 @@ class CSR(CompressedMatrix):
         # Debug checks
         uself, urhs = self.uncompress(), rhs.uncompress()
         uresult = uself * urhs
-        expect(uresult == result.uncompress(), "CSR dot prod does not work")
+        require(uresult == result.uncompress(), "CSR dot prod does not work")
 
         return result
 
@@ -804,7 +869,7 @@ class CSR(CompressedMatrix):
                     nnz += 1
 
         # Debug check
-        expect(result.uncompress() == self.uncompress().filter_pred(pred),
+        require(result.uncompress() == self.uncompress().filter_pred(pred),
                "csr filter_pred failed")
 
         return result
@@ -815,7 +880,7 @@ class CSR(CompressedMatrix):
         """
         What does sorting a matrix even mean?
         """
-        expect(False, "Not yet implemented")
+        require(False, "Not yet implemented")
 
     ###########################################################################
     def transpose(self):
@@ -839,7 +904,7 @@ class CSR(CompressedMatrix):
                 result._values[rows_offset]   = val
 
         # Debug
-        expect(result.uncompress() == self.uncompress().transpose(), "Tranpose failed")
+        require(result.uncompress() == self.uncompress().transpose(), "Tranpose failed")
 
         return result
 
@@ -860,7 +925,7 @@ class CSC(CompressedMatrix):
             self._csc_cols[col_idx] += 1
             nnz += 1
 
-        expect(nnz == self.nnz(), f"Bad nnz in CSC init, {nnz} != {self.nnz()}")
+        require(nnz == self.nnz(), f"Bad nnz in CSC init, {nnz} != {self.nnz()}")
 
         convert_counts_to_sum(self._csc_cols)
 
@@ -875,30 +940,30 @@ class CSC(CompressedMatrix):
                 self._values[rows_offset]   = val
 
         # Debug check
-        expect(csr_matrix.uncompress() == self.uncompress(), "CSC contructor broken")
+        require(csr_matrix.uncompress() == self.uncompress(), "CSC contructor broken")
 
     ###########################################################################
     def get_nnz_range(self, col_idx):
     ###########################################################################
-        expect(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
+        require(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
         return self._csc_cols[col_idx], self._csc_cols[col_idx+1]
 
     ###########################################################################
     def iter_rows_in_col(self, col_idx):
     ###########################################################################
-        expect(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
+        require(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
         return iter(self._csc_rows[slice(*self.get_nnz_range(col_idx))])
 
     ###########################################################################
     def iter_vals_in_col(self, col_idx):
     ###########################################################################
-        expect(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
+        require(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
         return iter(self._values[slice(*self.get_nnz_range(col_idx))])
 
     ###########################################################################
     def iter_col(self, col_idx):
     ###########################################################################
-        expect(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
+        require(col_idx < self.ncols(), f"Bad col_idx: {col_idx}")
         return zip(self.iter_rows_in_col(col_idx), self.iter_vals_in_col(col_idx))
 
     ###########################################################################
@@ -933,7 +998,7 @@ class COO(CompressedMatrix):
                 idx += 1
 
         # Debug check
-        expect(csr_matrix.uncompress() == self.uncompress(), "COO constructor broken")
+        require(csr_matrix.uncompress() == self.uncompress(), "COO constructor broken")
 
     ###########################################################################
     def uncompress(self):
