@@ -505,8 +505,8 @@ class SparseMatrix(object):
     ###########################################################################
     def submatrix(self, nrows, ncols):
     ###########################################################################
-        require(nrows <= self.nrows(), "")
-        require(ncols <= self.ncols(), "")
+        require(nrows <= self.nrows(), f"Bad nrows for submatrix, can't go beyond {self.nrows()} but got {nrows}")
+        require(ncols <= self.ncols(), f"Bad ncols for submatrix, can't go beyond {self.ncols()} but got {ncols}")
 
         result = SparseMatrix(nrows, ncols)
         for i in range(nrows):

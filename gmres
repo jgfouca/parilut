@@ -39,6 +39,8 @@ OR
 
     parser.add_argument("-d", "--debug", action="store_true", help="Launch pdb upon assertion failure.")
 
+    parser.add_argument("-v", "--verbose", action="store_true", help="Print extra info. Not suitable for big problems.")
+
     return parser.parse_args(args[1:])
 
 ###############################################################################

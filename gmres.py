@@ -8,7 +8,7 @@ class GMRES(object):
 ###############################################################################
 
     ###########################################################################
-    def __init__(self, A, f, it=5):
+    def __init__(self, A, f, it=50, verbose=False):
     ###########################################################################
         expect(A.nrows() == A.ncols(), "GMRES matrix must be square")
 
@@ -19,6 +19,7 @@ class GMRES(object):
 
         # params
         self._it = it
+        self._verbose = verbose
 
     ###########################################################################
     def main(self):
@@ -28,7 +29,7 @@ class GMRES(object):
 
         n = self._A.nrows()
         k = min(n, 50) # Number of arnoldi steps, what to pick for this?
-        h = SparseMatrix(k+1, k)
+        H = SparseMatrix(k+1, k)
         V = SparseMatrix(n, k+1)
 
         while restarts < self._it and not converged:
@@ -44,11 +45,11 @@ class GMRES(object):
 
                 # Build hessenberg matrix
                 for i in range(j+1):
-                    h[i][j] = Avj.dot_product(V.get_column(i))
+                    H[i][j] = Avj.dot_product(V.get_column(i))
 
-                sum_ =  V.get_column(0) * h[0][j]
+                sum_ =  V.get_column(0) * H[0][j]
                 for i in range(1, j+1):
-                    sum_ += V.get_column(i) * h[i][j]
+                    sum_ += V.get_column(i) * H[i][j]
 
                 v_next_col = Avj - sum_
 
@@ -58,27 +59,34 @@ class GMRES(object):
                     breakdown = True
                     break
                 else:
-                    h[j+1][j] = v_next_col.eucl_norm()
+                    H[j+1][j] = v_next_col.eucl_norm()
                     V.set_column(j+1, v_next_col.normalized())
 
             # Form approximate solution
             # vtemp = V.transpose() * V
             # require(vtemp.is_identity(), f"V is not orthogonal\n{V}")
             if not breakdown:
-                print(f"H is:\n{h}\nV is:\n{V}")
+                if self._verbose:
+                    print(f"H is:\n{H}\nV is:\n{V}")
 
-                Q, R = h.get_QR_fact()
-                print(f"Q is:\n{h}\nR is:\n{R}")
+                Q, R = H.get_QR_fact()
+                if self._verbose:
+                    print(f"Q is:\n{H}\nR is:\n{R}")
+
                 beta = r.eucl_norm()
                 y = (R.inverse() * beta) * Q.transpose() * get_basis_vector(k+1, 0)
-                print(f"y is:\n{y}")
+                if self._verbose:
+                    print(f"y is:\n{y}")
 
-                self._x = self._x + (V.submatrix(n, n) * y)
-                print(f"New x is:\n{self._x}")
+                self._x = self._x + (V.submatrix(n, k) * y)
+
+                if self._verbose:
+                    print(f"New x is:\n{self._x}")
 
             r = self._f - (self._A * self._x)
-            print(f"Residual norm is {r.eucl_norm()} with r:\n{r}")
-            # How to know if satisfied?
+            print(f"Residual norm is {r.eucl_norm()}")
+            if self._verbose:
+                print(f"  with r:\n{r}")
 
             restarts += 1
             r_norm = r.eucl_norm()
@@ -90,7 +98,7 @@ class GMRES(object):
         if converged:
             print(f"Converged in {k} iterations and {restarts} restarts")
         else:
-            expect(False, f"Did not converge in {it} iterations")
+            expect(False, f"Did not converge in {restarts} iterations")
 
     ###########################################################################
     def check_result(self):
@@ -99,7 +107,7 @@ class GMRES(object):
         expect(f == self._f, "Solution was not correct")
 
 ###############################################################################
-def gmres(rows, cols, pct_nz, seed, hardcoded, debug):
+def gmres(rows, cols, pct_nz, seed, hardcoded, debug, verbose):
 ###############################################################################
     expect(rows > 0, f"Bad rows {rows}")
     expect(cols > 0, f"Bad cols {rows}")
@@ -123,12 +131,13 @@ def gmres(rows, cols, pct_nz, seed, hardcoded, debug):
             f = SparseMatrix(rows, 1,    pct_nz=100)
             f = f.normalized()
 
-        print("A")
-        print(A)
-        print("f")
-        print(f)
+        if verbose:
+            print("A")
+            print(A)
+            print("f")
+            print(f)
 
-        gmr = GMRES(A, f)
+        gmr = GMRES(A, f, verbose=verbose)
 
         gmr.main()
 
