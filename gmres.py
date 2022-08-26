@@ -53,7 +53,7 @@ class GMRES(object):
                 v_next_col = Avj - sum_
 
                 norm_v = v_next_col.eucl_norm()
-                if near(norm_v, 0):
+                if norm_v == 0:
                     # breakdown
                     breakdown = True
                     break
