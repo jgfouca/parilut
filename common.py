@@ -70,6 +70,15 @@ def get_basis_vector(nrows, col_idx):
     return result
 
 ###############################################################################
+def get_identity_matrix(nrows):
+###############################################################################
+    idm = SparseMatrix(nrows, nrows)
+    for i in range(nrows):
+        idm[i][i] = 1
+
+    return idm
+
+###############################################################################
 class SparseMatrix(object):
 ###############################################################################
     """
@@ -138,21 +147,30 @@ class SparseMatrix(object):
                 [0., 2., 0.],
                 [0., 0., 3.],
             ]
-            result = SparseMatrix(n, n)
-            for row_idx in range(n):
-                for col_idx in range(n):
-                    result[row_idx][col_idx] = hardcoded_vals[row_idx][col_idx]
+            hardcoded_vect = [ 1., 1., 1]
 
-            result_v = SparseMatrix(n, 1)
-            for row_idx in range(n):
-                result_v[row_idx][0] = 1
+        elif matrix_id == 1:
+            n = 3
+            hardcoded_vals = [
+                [4., 0., 0.],
+                [0., 4., 0.],
+                [0., 0., 4.],
+            ]
+            hardcoded_vect = [ 1., 1., 1]
 
-            return result, result_v
         else:
             expect(False, f"Unknown hardcoded matrix id {matrix_id}")
 
-        return None
+        result = SparseMatrix(n, n)
+        for row_idx in range(n):
+            for col_idx in range(n):
+                result[row_idx][col_idx] = hardcoded_vals[row_idx][col_idx]
 
+        result_v = SparseMatrix(n, 1)
+        for row_idx in range(n):
+            result_v[row_idx][0] = hardcoded_vect[row_idx]
+
+        return result, result_v
 
     ###########################################################################
     def __str__(self):
@@ -190,7 +208,7 @@ class SparseMatrix(object):
 
         for lhsrow, rhsrow in zip(self, rhs):
             for lhsval, rhsval in zip(lhsrow, rhsrow):
-                if lhsval != rhsval:
+                if not near(lhsval, rhsval):
                     return False
 
         return True
@@ -414,6 +432,7 @@ class SparseMatrix(object):
 
         R = Q.transpose() * self
         require(R.is_upper(), f"R should be an upper triangular matrix, it is:\n{R}")
+        require((Q.transpose() * Q).is_identity(), f"Q matrix not orthogonal:\n{Q}")
 
         return Q, R
 
@@ -430,16 +449,7 @@ class SparseMatrix(object):
     ###########################################################################
     def is_identity(self):
     ###########################################################################
-        for i in range(self.nrows()):
-            for j in range(self.ncols()):
-                if i == j:
-                    if not near(self[i][j], 1.0):
-                        return False
-                else:
-                    if not near(self[i][j], 0.0):
-                        return False
-
-        return True
+        return self == get_identity_matrix(self.nrows())
 
     ###########################################################################
     def scale_row(self, row_idx, scale):
@@ -489,6 +499,19 @@ class SparseMatrix(object):
 
         require(orig.is_identity(), "Orig did not become identity")
         require((self * result).is_identity(), "Result is not inverse")
+
+        return result
+
+    ###########################################################################
+    def submatrix(self, nrows, ncols):
+    ###########################################################################
+        require(nrows <= self.nrows(), "")
+        require(ncols <= self.ncols(), "")
+
+        result = SparseMatrix(nrows, ncols)
+        for i in range(nrows):
+            for j in range(ncols):
+                result[i][j] = self[i][j]
 
         return result
 

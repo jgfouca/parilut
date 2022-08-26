@@ -1,7 +1,7 @@
 
 import random, sys, math
 
-from common import expect, SparseMatrix, CSR, enable_debug, get_basis_vector
+from common import expect, SparseMatrix, CSR, enable_debug, get_basis_vector, require, near
 
 ###############################################################################
 class GMRES(object):
@@ -24,90 +24,79 @@ class GMRES(object):
     def main(self):
     ###########################################################################
         converged = False
-        it = 0
+        restarts = 0
 
         n = self._A.nrows()
-        k = n # Number of arnoldi steps, what to pick for this?
+        k = min(n, 50) # Number of arnoldi steps, what to pick for this?
         h = SparseMatrix(k+1, k)
-        v = SparseMatrix(n, k+1)
+        V = SparseMatrix(n, k+1)
 
-        while it < self._it and not converged:
+        while restarts < self._it and not converged:
             # Start
             r = self._f - (self._A * self._x)
-            v.set_column(0, r.normalized())
+            V.set_column(0, r.normalized())
 
             # Iterate
-            for j in range(k): # Not sure about this range
+            breakdown = False
+            for j in range(k):
 
-                Avj = self._A * v.get_column(j)
+                Avj = self._A * V.get_column(j)
 
                 # Build hessenberg matrix
                 for i in range(j+1):
-                    h[i][j] = Avj.dot_product(v.get_column(i))
+                    h[i][j] = Avj.dot_product(V.get_column(i))
 
-                sum_ =  v.get_column(0) * h[0][j]
+                sum_ =  V.get_column(0) * h[0][j]
                 for i in range(1, j+1):
-                    sum_ += v.get_column(i) * h[i][j]
+                    sum_ += V.get_column(i) * h[i][j]
 
                 v_next_col = Avj - sum_
 
-                h[j+1][j] = v_next_col.eucl_norm()
-                v.set_column(j+1, v_next_col.normalized())
+                norm_v = v_next_col.eucl_norm()
+                if near(norm_v, 0):
+                    # breakdown
+                    breakdown = True
+                    break
+                else:
+                    h[j+1][j] = v_next_col.eucl_norm()
+                    V.set_column(j+1, v_next_col.normalized())
 
             # Form approximate solution
-            print(f"H is:\n{h}")
+            # vtemp = V.transpose() * V
+            # require(vtemp.is_identity(), f"V is not orthogonal\n{V}")
+            if not breakdown:
+                print(f"H is:\n{h}\nV is:\n{V}")
 
-            Q, R = h.get_QR_fact()
-            print(f"Q is:\n{h}\nR is:\n{R}")
-            B = r.eucl_norm()
-            y = (R.inverse() * B) * Q.transpose() * get_basis_vector(k+1, 0)
+                Q, R = h.get_QR_fact()
+                print(f"Q is:\n{h}\nR is:\n{R}")
+                beta = r.eucl_norm()
+                y = (R.inverse() * beta) * Q.transpose() * get_basis_vector(k+1, 0)
+                print(f"y is:\n{y}")
 
-            self._x = self._x + (v * y)
-            print(f"New x is:\n{self._x}")
+                self._x = self._x + (V.submatrix(n, n) * y)
+                print(f"New x is:\n{self._x}")
 
             r = self._f - (self._A * self._x)
             print(f"Residual norm is {r.eucl_norm()} with r:\n{r}")
             # How to know if satisfied?
 
-            it += 1
-            converged = False
+            restarts += 1
+            r_norm = r.eucl_norm()
+            if near(r_norm, 0):
+                converged = True
+            else:
+                expect(not breakdown, f"Problem broke down but did not converge, residual={r_norm}")
 
         if converged:
-            print(f"Converged in {it} iterations")
+            print(f"Converged in {k} iterations and {restarts} restarts")
         else:
             expect(False, f"Did not converge in {it} iterations")
 
     ###########################################################################
-    def check_hc_result(self, matrix_id):
+    def check_result(self):
     ###########################################################################
-        if matrix_id == 0:
-            expected_l = [
-                [1.,       0.,       0.,       0.],
-                [2.,       1.,       0.,       0.],
-                [0.5,      0.352941, 1.,       0.],
-                [0.,       0.,       -1.31897, 1.],
-            ]
-            expected_u = [
-                [1.,       6.,       4.,       7.],
-                [0.,       -17.,     -8.,     -6.],
-                [0.,       0.,       6.82353,  0.],
-                [0.,       0.,       0.,       0.],
-            ]
-        else:
-            expect(False, f"Unknown hardcoded matrix id {matrix_id}")
-
-        l = self._L_csr.uncompress()
-        u = self._U_csr.uncompress()
-        tol = 1./1000
-
-        for row_idx in range(self._A.nrows()):
-            for col_idx in range(self._A.nrows()):
-                expect(math.isclose(l[row_idx][col_idx], expected_l[row_idx][col_idx], abs_tol=tol),
-                       f"L[{row_idx}][{col_idx}] did not have expected value.")
-                expect(math.isclose(u[row_idx][col_idx], expected_u[row_idx][col_idx], abs_tol=tol),
-                       f"U[{row_idx}][{col_idx}] did not have expected value.")
-
-        print(f"hardcoded result {matrix_id} check passed.")
+        f = self._A * self._x
+        expect(f == self._f, "Solution was not correct")
 
 ###############################################################################
 def gmres(rows, cols, pct_nz, seed, hardcoded, debug):
@@ -131,7 +120,7 @@ def gmres(rows, cols, pct_nz, seed, hardcoded, debug):
             A, f = SparseMatrix.get_hardcode_gmres(hardcoded)
         else:
             A = SparseMatrix(rows, cols, pct_nz=pct_nz)
-            f = SparseMatrix(rows, 1,    pct_nz=pct_nz)
+            f = SparseMatrix(rows, 1,    pct_nz=100)
             f = f.normalized()
 
         print("A")
@@ -143,9 +132,8 @@ def gmres(rows, cols, pct_nz, seed, hardcoded, debug):
 
         gmr.main()
 
-        if hardcoded is not None:
-            gmr.check_hc_result(hardcoded)
+        gmr.check_result()
 
-    except SystemExit as e:
+    except BaseException as e:
         print(f"Encountered error with seed {seed}", file=sys.stderr)
         raise e
