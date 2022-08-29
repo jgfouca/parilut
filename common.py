@@ -11,6 +11,13 @@ def enable_debug():
     global _DEBUG
     _DEBUG = True
 
+_GLOBAL_TOL = 1e-10
+###############################################################################
+def set_global_tol(tol):
+###############################################################################
+    global _GLOBAL_TOL
+    _GLOBAL_TOL = tol
+
 ###############################################################################
 def expect(condition, error_msg, exc_type=SystemExit, error_prefix="ERROR:"):
 ###############################################################################
@@ -38,7 +45,7 @@ def require(condition, error_msg, exc_type=RuntimeError, error_prefix="ERROR:"):
         expect(condition, error_msg, exc_type=exc_type, error_prefix=error_prefix)
 
 ###############################################################################
-def near(val1, val2, abs_tol=1e-10):
+def near(val1, val2, abs_tol=_GLOBAL_TOL):
 ###############################################################################
     return math.isclose(val1, val2, abs_tol=abs_tol)
 
@@ -88,7 +95,7 @@ class SparseMatrix(object):
     """
 
     ###########################################################################
-    def __init__(self, rows, cols, pct_nz=0):
+    def __init__(self, rows, cols, pct_nz=0, diag_lambda=None):
     ###########################################################################
         self._matrix = [list() for _ in range(rows)]
 
@@ -101,10 +108,14 @@ class SparseMatrix(object):
 
         # Non-zero matrix must have at least 1 value in each row and col
         # so make unit diagonal
-        if pct_nz > 0:
+        if pct_nz > 0 or diag_lambda is not None:
             if rows == cols:
-                for i in range(rows):
-                    self[i][i] = 1.0
+                if diag_lambda:
+                    for i in range(rows):
+                        self[i][i] = diag_lambda(i)
+                else:
+                    for i in range(rows):
+                        self[i][i] = 1.0
             else:
                 self[0][0] = random.uniform(0.0, 1.0)
 
@@ -157,6 +168,23 @@ class SparseMatrix(object):
                 [0., 0., 4.],
             ]
             hardcoded_vect = [ 1., 1., 1]
+
+        elif matrix_id == 2:
+            def diag_func(r):
+                if r == 0:
+                    return .1
+                elif r == 1:
+                    return .5
+                else:
+                    return r-1
+
+            n = 100
+            result = SparseMatrix(n, n, pct_nz=0, diag_lambda=diag_func)
+            result_v = SparseMatrix(n, 1,    pct_nz=100)
+            for i in range(n):
+                result_v[i][0] = 1.
+
+            return result, result_v
 
         else:
             expect(False, f"Unknown hardcoded matrix id {matrix_id}")

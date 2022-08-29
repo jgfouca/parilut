@@ -1,14 +1,14 @@
 
 import random, sys, math
 
-from common import expect, SparseMatrix, CSR, enable_debug, get_basis_vector, require, near
+from common import expect, SparseMatrix, CSR, enable_debug, get_basis_vector, require, near, set_global_tol
 
 ###############################################################################
 class GMRES(object):
 ###############################################################################
 
     ###########################################################################
-    def __init__(self, A, f, it=50, verbose=False):
+    def __init__(self, A, f, max_iter=50, restarts=500, verbose=False):
     ###########################################################################
         expect(A.nrows() == A.ncols(), "GMRES matrix must be square")
 
@@ -18,7 +18,8 @@ class GMRES(object):
         self._x     = SparseMatrix(A.nrows(), 1)
 
         # params
-        self._it = it
+        self._max_iter = max_iter
+        self._restarts = restarts
         self._verbose = verbose
 
     ###########################################################################
@@ -28,11 +29,12 @@ class GMRES(object):
         restarts = 0
 
         n = self._A.nrows()
-        k = min(n, 50) # Number of arnoldi steps, what to pick for this?
+        k = self._max_iter # min(n, self._max_iter) # Number of arnoldi steps, what to pick for this?
         H = SparseMatrix(k+1, k)
         V = SparseMatrix(n, k+1)
 
-        while restarts < self._it and not converged:
+        prev_residual = None
+        while restarts < self._restarts and not converged:
             # Start
             r = self._f - (self._A * self._x)
             V.set_column(0, r.normalized())
@@ -92,11 +94,23 @@ class GMRES(object):
             r_norm = r.eucl_norm()
             if near(r_norm, 0):
                 converged = True
+                prev_residual = r_norm
             else:
                 expect(not breakdown, f"Problem broke down but did not converge, residual={r_norm}")
+                if prev_residual is not None:
+                    improvement = prev_residual - r_norm
+                    print(f"  Improvment is {improvement}")
+                    if near(improvement, 0, abs_tol=1e-13):
+                        converged = True
+                        print("    Stagnated!")
+
+                prev_residual = r_norm
 
         if converged:
-            print(f"Converged in {k} iterations and {restarts} restarts")
+            if near(prev_residual, 0):
+                print(f"Converged in {k} iterations and {restarts} restarts")
+            else:
+                print(f"Stagnated in {k} iterations and {restarts} restarts")
         else:
             expect(False, f"Did not converge in {restarts} iterations")
 
@@ -105,17 +119,21 @@ class GMRES(object):
     ###########################################################################
         f = self._A * self._x
         expect(f == self._f, "Solution was not correct")
+        print("Solution was correct!")
 
 ###############################################################################
-def gmres(rows, cols, pct_nz, seed, hardcoded, debug, verbose):
+def gmres(rows, cols, pct_nz, seed, max_iters, max_restarts, global_tol, hardcoded, debug, verbose):
 ###############################################################################
     expect(rows > 0, f"Bad rows {rows}")
     expect(cols > 0, f"Bad cols {rows}")
     expect(rows == cols, f"{rows} != {cols}. Only square matrices allowed")
-    expect(pct_nz > 0 and pct_nz <= 100, f"Bad pct_nz {pct_nz}")
+    expect(pct_nz >= 0 and pct_nz <= 100, f"Bad pct_nz {pct_nz}")
 
     if debug:
         enable_debug()
+
+    if global_tol:
+        set_global_tol(global_tol)
 
     if seed is not None:
         random.seed(seed)
@@ -127,7 +145,7 @@ def gmres(rows, cols, pct_nz, seed, hardcoded, debug, verbose):
         if hardcoded is not None:
             A, f = SparseMatrix.get_hardcode_gmres(hardcoded)
         else:
-            A = SparseMatrix(rows, cols, pct_nz=pct_nz)
+            A = SparseMatrix(rows, cols, pct_nz=pct_nz, diag_lambda=diag_func)
             f = SparseMatrix(rows, 1,    pct_nz=100)
             f = f.normalized()
 
@@ -137,7 +155,7 @@ def gmres(rows, cols, pct_nz, seed, hardcoded, debug, verbose):
             print("f")
             print(f)
 
-        gmr = GMRES(A, f, verbose=verbose)
+        gmr = GMRES(A, f, max_iter=max_iters, restarts=max_restarts, verbose=verbose)
 
         gmr.main()
 

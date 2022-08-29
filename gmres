@@ -33,6 +33,12 @@ OR
 
     parser.add_argument("pct_nz", type=int, help="The percent of non-zero entries as an integer 0-100")
 
+    parser.add_argument("-m", "--max-iters", type=int, default=50, help="Maximum iterations per run")
+
+    parser.add_argument("-r", "--max-restarts", type=int, default=100, help="Maximum iterations per run")
+
+    parser.add_argument("-t", "--global-tol", type=int, default=10, help="1.e-$global_tol will be the global tolerance")
+
     parser.add_argument("-s", "--seed", type=int, help="The random number generator seed.")
 
     parser.add_argument("-c", "--hardcoded", type=int, help="Use a hardcoded matrix.")
