@@ -145,7 +145,7 @@ def gmres(rows, cols, pct_nz, seed, max_iters, max_restarts, global_tol, hardcod
         if hardcoded is not None:
             A, f = SparseMatrix.get_hardcode_gmres(hardcoded)
         else:
-            A = SparseMatrix(rows, cols, pct_nz=pct_nz, diag_lambda=diag_func)
+            A = SparseMatrix(rows, cols, pct_nz=pct_nz, diag_lambda=lambda i: pow(rows, 1/3.))
             f = SparseMatrix(rows, 1,    pct_nz=100)
             f = f.normalized()
 
