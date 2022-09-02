@@ -36,7 +36,6 @@ def require(condition, error_msg, exc_type=RuntimeError, error_prefix="ERROR:"):
     Similar to assert except uses proper function syntax. Useful for
     checking programming error.
     """
-    global _DEBUG
     if _DEBUG:
         if not condition:
             import pdb
@@ -72,21 +71,21 @@ def convert_counts_to_sum(the_list):
 ###############################################################################
 def get_basis_vector(nrows, col_idx):
 ###############################################################################
-    result = SparseMatrix(nrows, 1)
-    result[col_idx][0] = 1
+    result = Matrix2DR(nrows, 1)
+    result[col_idx,0] = 1
     return result
 
 ###############################################################################
 def get_identity_matrix(nrows):
 ###############################################################################
-    idm = SparseMatrix(nrows, nrows)
+    idm = Matrix2DR(nrows, nrows)
     for i in range(nrows):
-        idm[i][i] = 1
+        idm[i,i] = 1
 
     return idm
 
 ###############################################################################
-class SparseMatrix(object):
+class Matrix2DR(object):
 ###############################################################################
     """
     A 2D uncompressed sparse matrix, row major, implemented as a list of lists
@@ -112,12 +111,12 @@ class SparseMatrix(object):
             if rows == cols:
                 if diag_lambda:
                     for i in range(rows):
-                        self[i][i] = diag_lambda(i)
+                        self[i,i] = diag_lambda(i)
                 else:
                     for i in range(rows):
-                        self[i][i] = 1.0
+                        self[i,i] = 1.0
             else:
-                self[0][0] = random.uniform(0.0, 1.0)
+                self[0,0] = random.uniform(0.0, 1.0)
 
     ###########################################################################
     @staticmethod
@@ -133,10 +132,10 @@ class SparseMatrix(object):
                 [0.5, -3.,   6., 0.],
                 [0.2, -0.5, -9., 0.,],
             ]
-            result = SparseMatrix(4, 4)
+            result = Matrix2DR(4, 4)
             for row_idx in range(4):
                 for col_idx in range(4):
-                    result[row_idx][col_idx] = hardcoded_vals[row_idx][col_idx]
+                    result[row_idx,col_idx] = hardcoded_vals[row_idx][col_idx]
 
             return result
         else:
@@ -179,24 +178,24 @@ class SparseMatrix(object):
                     return r-1
 
             n = 100
-            result = SparseMatrix(n, n, pct_nz=0, diag_lambda=diag_func)
-            result_v = SparseMatrix(n, 1,    pct_nz=100)
+            result = Matrix2DR(n, n, pct_nz=0, diag_lambda=diag_func)
+            result_v = Matrix2DR(n, 1,    pct_nz=100)
             for i in range(n):
-                result_v[i][0] = 1.
+                result_v[i,0] = 1.
 
             return result, result_v
 
         else:
             expect(False, f"Unknown hardcoded matrix id {matrix_id}")
 
-        result = SparseMatrix(n, n)
+        result = Matrix2DR(n, n)
         for row_idx in range(n):
             for col_idx in range(n):
-                result[row_idx][col_idx] = hardcoded_vals[row_idx][col_idx]
+                result[row_idx,col_idx] = hardcoded_vals[row_idx][col_idx]
 
-        result_v = SparseMatrix(n, 1)
+        result_v = Matrix2DR(n, 1)
         for row_idx in range(n):
-            result_v[row_idx][0] = hardcoded_vect[row_idx]
+            result_v[row_idx,0] = hardcoded_vect[row_idx]
 
         return result, result_v
 
@@ -217,15 +216,20 @@ class SparseMatrix(object):
     ###########################################################################
 
     ###########################################################################
-    def ncols(self): return 0 if self.nrows() == 0 else len(self._matrix[0])
+    def ncols(self):
     ###########################################################################
+        return 0 if self.nrows() == 0 else len(self._matrix[0])
 
     ###########################################################################
     def __iter__(self): return iter(self._matrix)
     ###########################################################################
 
     ###########################################################################
-    def __getitem__(self, idx): return self._matrix[idx]
+    def __getitem__(self, tup): return self._matrix[tup[0]][tup[1]]
+    ###########################################################################
+
+    ###########################################################################
+    def __setitem__(self, tup, val): self._matrix[tup[0]][tup[1]] = val
     ###########################################################################
 
     ###########################################################################
@@ -247,11 +251,11 @@ class SparseMatrix(object):
         require(self.nrows() == rhs.nrows(), "Cannot add matrix, incompatible dims")
         require(self.ncols() == rhs.ncols(), "Cannot add matrix, incompatible dims")
 
-        result = SparseMatrix(self.nrows(), self.ncols())
+        result = Matrix2DR(self.nrows(), self.ncols())
 
         for i in range(self.nrows()):
             for j in range(self.ncols()):
-                result[i][j] = self[i][j] + rhs[i][j]
+                result[i,j] = self[i,j] + rhs[i,j]
 
         return result
 
@@ -261,39 +265,36 @@ class SparseMatrix(object):
         require(self.nrows() == rhs.nrows(), "Cannot subtract matrix, incompatible dims")
         require(self.ncols() == rhs.ncols(), "Cannot subtract matrix, incompatible dims")
 
-        result = SparseMatrix(self.nrows(), self.ncols())
+        result = Matrix2DR(self.nrows(), self.ncols())
 
         for i in range(self.nrows()):
             for j in range(self.ncols()):
-                result[i][j] = self[i][j] - rhs[i][j]
+                result[i,j] = self[i,j] - rhs[i,j]
 
         return result
 
     ###########################################################################
     def __mul__(self, rhs):
     ###########################################################################
-        if isinstance(rhs, SparseMatrix):
+        if isinstance(rhs, float):
+            result = Matrix2DR(self.nrows(), self.ncols())
+
+            for i in range(self.nrows()):
+                for j in range(self.ncols()):
+                    result[i,j] = self[i,j]*rhs
+        else:
             require(self.ncols() == rhs.nrows(),
                     f"Cannot multiply matrix, incompatible dims. LHS cols={self.ncols()}, RHS rows={rhs.nrows()}")
 
-            result = SparseMatrix(self.nrows(), rhs.ncols())
+            result = Matrix2DR(self.nrows(), rhs.ncols())
 
             for i in range(self.nrows()):
                 for j in range(rhs.ncols()):
                     curr_sum = 0.0
                     for k in range(self.ncols()):
-                        curr_sum += (self[i][k] * rhs[k][j])
+                        curr_sum += (self[i,k] * rhs[k,j])
 
-                    result[i][j] = curr_sum
-
-        else:
-            require(isinstance(rhs, float), "Expected either SparseMatrix or scalar float rhs for __mul__")
-
-            result = SparseMatrix(self.nrows(), self.ncols())
-
-            for i in range(self.nrows()):
-                for j in range(self.ncols()):
-                    result[i][j] = self[i][j]*rhs
+                    result[i,j] = curr_sum
 
         return result
 
@@ -305,23 +306,23 @@ class SparseMatrix(object):
         for L should be 1. The diagonals for U should match what is in self or
         be 1.0 if self's is zero.
         """
-        l = SparseMatrix(self.nrows(), self.ncols())
-        u = SparseMatrix(self.nrows(), self.ncols())
+        l = Matrix2DR(self.nrows(), self.ncols())
+        u = Matrix2DR(self.nrows(), self.ncols())
 
         for row_idx in range(self.nrows()):
             diag_val = 1.
             for col_idx in range(self.ncols()):
-                val = self[row_idx][col_idx]
+                val = self[row_idx,col_idx]
                 if col_idx < row_idx:
-                    l[row_idx][col_idx] = val
+                    l[row_idx,col_idx] = val
                 elif col_idx == row_idx:
-                    l[row_idx][col_idx] = 1.
+                    l[row_idx,col_idx] = 1.
                     if val != 0.0:
                         diag_val = val
                 else:
-                    u[row_idx][col_idx] = val
+                    u[row_idx,col_idx] = val
 
-            u[row_idx][row_idx] = diag_val
+            u[row_idx,row_idx] = diag_val
 
         return l, u
 
@@ -338,24 +339,24 @@ class SparseMatrix(object):
     ###########################################################################
     def filter_pred(self, pred):
     ###########################################################################
-        result = SparseMatrix(self.nrows(), self.ncols())
+        result = Matrix2DR(self.nrows(), self.ncols())
 
         for i in range(self.nrows()):
             for j in range(self.ncols()):
-                val = self[i][j]
+                val = self[i,j]
                 if pred(i, j, val):
-                    result[i][j] = val
+                    result[i,j] = val
 
         return result
 
     ###########################################################################
     def transpose(self):
     ###########################################################################
-        result = SparseMatrix(self.ncols(), self.nrows())
+        result = Matrix2DR(self.ncols(), self.nrows())
 
         for i in range(self.nrows()):
             for j in range(self.ncols()):
-                result[j][i] = self[i][j]
+                result[j,i] = self[i,j]
 
         return result
 
@@ -364,13 +365,13 @@ class SparseMatrix(object):
     ###########################################################################
         require(self.ncols() == 1, "Normalize only works on vectors")
 
-        result = SparseMatrix(self.nrows(), 1)
+        result = Matrix2DR(self.nrows(), 1)
 
         enorm = self.eucl_norm()
         require(enorm != 0, f"Got zero euclidean norm for {self}")
 
         for i in range(self.nrows()):
-            result[i][0] = self[i][0] / enorm
+            result[i,0] = self[i,0] / enorm
 
         require(near(result.length(), 1.0), f"Normalize did not produce unit vector? Length is {self.length()}")
 
@@ -383,7 +384,7 @@ class SparseMatrix(object):
 
         result = 0
         for i in range(self.nrows()):
-            result += self[i][0]*self[i][0]
+            result += self[i,0]*self[i,0]
 
         return math.sqrt(result)
 
@@ -403,7 +404,7 @@ class SparseMatrix(object):
 
         result = 0
         for i in range(self.nrows()):
-            result += (self[i][0]*rhs[i][0])
+            result += (self[i,0]*rhs[i,0])
 
         return result
 
@@ -415,17 +416,17 @@ class SparseMatrix(object):
         require(col_idx < self.ncols(), "col_idx is beyond matrix")
 
         for i in range(self.nrows()):
-            self[i][col_idx] = vector[i][0]
+            self[i,col_idx] = vector[i,0]
 
     ###########################################################################
     def get_column(self, col_idx):
     ###########################################################################
         require(col_idx < self.ncols(), "col_idx is beyond matrix")
 
-        result = SparseMatrix(self.nrows(), 1)
+        result = Matrix2DR(self.nrows(), 1)
 
         for i in range(self.nrows()):
-            result[i][0] = self[i][col_idx]
+            result[i,0] = self[i,col_idx]
 
         return result
 
@@ -444,9 +445,9 @@ class SparseMatrix(object):
         Gram-Schmidt QR factorization
         """
 
-        U = SparseMatrix(self.nrows(), self.ncols())
-        Q = SparseMatrix(self.nrows(), self.ncols())
-        R = SparseMatrix(self.nrows(), self.ncols())
+        U = Matrix2DR(self.nrows(), self.ncols())
+        Q = Matrix2DR(self.nrows(), self.ncols())
+        R = Matrix2DR(self.nrows(), self.ncols())
 
         for i in range(self.ncols()):
             a_i = self.get_column(i)
@@ -469,7 +470,7 @@ class SparseMatrix(object):
     ###########################################################################
         for i in range(self.nrows()):
             for j in range(self.ncols()):
-                if i > j and not near(self[i][j], 0.0):
+                if i > j and not near(self[i,j], 0.0):
                     return False
 
         return True
@@ -483,13 +484,13 @@ class SparseMatrix(object):
     def scale_row(self, row_idx, scale):
     ###########################################################################
         for j in range(self.ncols()):
-            self[row_idx][j] *= scale
+            self[row_idx,j] *= scale
 
     ###########################################################################
     def add_rows(self, src_row, tgt_row, scale):
     ###########################################################################
         for j in range(self.ncols()):
-            self[tgt_row][j] += (scale * self[src_row][j])
+            self[tgt_row,j] += (scale * self[src_row,j])
 
     ###########################################################################
     def inverse(self):
@@ -497,31 +498,31 @@ class SparseMatrix(object):
         require(self.nrows() == self.ncols(), "Inverse only works for square matrices")
         require(self.is_upper(), "Inverse is for upper triangular matrices only")
 
-        result = SparseMatrix(self.nrows(), self.ncols())
-        orig   = SparseMatrix(self.nrows(), self.ncols())
+        result = Matrix2DR(self.nrows(), self.ncols())
+        orig   = Matrix2DR(self.nrows(), self.ncols())
 
         # Copy
         for i in range(self.nrows()):
             for j in range(self.ncols()):
-                orig[i][j] = self[i][j]
+                orig[i,j] = self[i,j]
 
         # Set result to identity matrix
         for i in range(self.nrows()):
-            result[i][i] = 1
+            result[i,i] = 1
 
         # Get 1's in diagonals
         for i in range(self.nrows()):
-            orig_diag = orig[i][i]
+            orig_diag = orig[i,i]
             if orig_diag != 1.0 and orig_diag != 0:
-                scale = 1/orig[i][i]
+                scale = 1/orig[i,i]
                 orig.scale_row(i, scale)
                 result.scale_row(i, scale)
 
         # Get zeros in non-diagonals
         for i in range(self.nrows()):
             for j in range(i):
-                if not near(orig[j][i], 0):
-                    scale = -orig[j][i]
+                if not near(orig[j,i], 0):
+                    scale = -orig[j,i]
                     orig.add_rows(i, j, scale)
                     result.add_rows(i, j, scale)
 
@@ -536,10 +537,10 @@ class SparseMatrix(object):
         require(nrows <= self.nrows(), f"Bad nrows for submatrix, can't go beyond {self.nrows()} but got {nrows}")
         require(ncols <= self.ncols(), f"Bad ncols for submatrix, can't go beyond {self.ncols()} but got {ncols}")
 
-        result = SparseMatrix(nrows, ncols)
+        result = Matrix2DR(nrows, ncols)
         for i in range(nrows):
             for j in range(ncols):
-                result[i][j] = self[i][j]
+                result[i,j] = self[i,j]
 
         return result
 
@@ -886,11 +887,11 @@ class CSR(CompressedMatrix):
     ###########################################################################
     def uncompress(self):
     ###########################################################################
-        result = SparseMatrix(self._nrows, self._ncols)
+        result = Matrix2DR(self._nrows, self._ncols)
 
         for row_idx in range(self._nrows):
             for col_idx, val in self.iter_row(row_idx):
-                result[row_idx][col_idx] = val
+                result[row_idx,col_idx] = val
 
         return result
 
@@ -1020,11 +1021,11 @@ class CSC(CompressedMatrix):
     ###########################################################################
     def uncompress(self):
     ###########################################################################
-        result = SparseMatrix(self._nrows, self._ncols)
+        result = Matrix2DR(self._nrows, self._ncols)
 
         for col_idx in range(self._ncols):
             for row_idx, val in self.iter_col(col_idx):
-                result[row_idx][col_idx] = val
+                result[row_idx,col_idx] = val
 
         return result
 
@@ -1054,9 +1055,9 @@ class COO(CompressedMatrix):
     ###########################################################################
     def uncompress(self):
     ###########################################################################
-        result = SparseMatrix(self._nrows, self._ncols)
+        result = Matrix2DR(self._nrows, self._ncols)
 
         for row_idx, col_idx, val in zip(self._coo_rows, self._coo_cols, self._values):
-            result[row_idx][col_idx] = val
+            result[row_idx,col_idx] = val
 
         return result

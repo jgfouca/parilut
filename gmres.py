@@ -1,7 +1,7 @@
 
 import random, sys, math
 
-from common import expect, SparseMatrix, CSR, enable_debug, get_basis_vector, require, near, set_global_tol
+from common import expect, Matrix2DR, CSR, enable_debug, get_basis_vector, require, near, set_global_tol
 
 ###############################################################################
 class GMRES(object):
@@ -15,7 +15,7 @@ class GMRES(object):
         self._A     = A
         self._A_csr = CSR(src_matrix=A)
         self._f     = f
-        self._x     = SparseMatrix(A.nrows(), 1)
+        self._x     = Matrix2DR(A.nrows(), 1)
 
         # params
         self._max_iter = max_iter
@@ -30,8 +30,8 @@ class GMRES(object):
 
         n = self._A.nrows()
         k = self._max_iter # min(n, self._max_iter) # Number of arnoldi steps, what to pick for this?
-        H = SparseMatrix(k+1, k)
-        V = SparseMatrix(n, k+1)
+        H = Matrix2DR(k+1, k)
+        V = Matrix2DR(n, k+1)
 
         prev_residual = None
         while restarts < self._restarts and not converged:
@@ -47,11 +47,11 @@ class GMRES(object):
 
                 # Build hessenberg matrix
                 for i in range(j+1):
-                    H[i][j] = Avj.dot_product(V.get_column(i))
+                    H[i,j] = Avj.dot_product(V.get_column(i))
 
-                sum_ =  V.get_column(0) * H[0][j]
+                sum_ =  V.get_column(0) * H[0,j]
                 for i in range(1, j+1):
-                    sum_ += V.get_column(i) * H[i][j]
+                    sum_ += V.get_column(i) * H[i,j]
 
                 v_next_col = Avj - sum_
 
@@ -61,7 +61,7 @@ class GMRES(object):
                     breakdown = True
                     break
                 else:
-                    H[j+1][j] = v_next_col.eucl_norm()
+                    H[j+1,j] = v_next_col.eucl_norm()
                     V.set_column(j+1, v_next_col.normalized())
 
             # Form approximate solution
@@ -143,10 +143,10 @@ def gmres(rows, cols, pct_nz, seed, max_iters, max_restarts, global_tol, hardcod
 
     try:
         if hardcoded is not None:
-            A, f = SparseMatrix.get_hardcode_gmres(hardcoded)
+            A, f = Matrix2DR.get_hardcode_gmres(hardcoded)
         else:
-            A = SparseMatrix(rows, cols, pct_nz=pct_nz, diag_lambda=lambda i: pow(rows, 1/3.))
-            f = SparseMatrix(rows, 1,    pct_nz=100)
+            A = Matrix2DR(rows, cols, pct_nz=pct_nz, diag_lambda=lambda i: pow(rows, 1/3.))
+            f = Matrix2DR(rows, 1,    pct_nz=100)
             f = f.normalized()
 
         if verbose:

@@ -2,7 +2,7 @@
 import random, sys, bisect, math
 from dataclasses import dataclass
 
-from common import expect, SparseMatrix, CSR, CSC
+from common import expect, Matrix2DR, CSR, CSC
 
 ###############################################################################
 class PARILUT(object):
@@ -53,9 +53,9 @@ class PARILUT(object):
         # Debug, expect diagonal non-zero
         for row_idx in range(nrows):
             expect(self._L_csr.has(row_idx, row_idx),
-                   f"No diagonal in L_csr[{row_idx}][{row_idx}]")
+                   f"No diagonal in L_csr[{row_idx},{row_idx}]")
             expect(self._U_csr.has(row_idx, row_idx),
-                   f"No diagonal in U_csr[{row_idx}][{row_idx}]")
+                   f"No diagonal in U_csr[{row_idx},{row_idx}]")
 
         @dataclass
         class RowState:
@@ -306,10 +306,10 @@ class PARILUT(object):
 
         for row_idx in range(self._A.nrows()):
             for col_idx in range(self._A.nrows()):
-                expect(math.isclose(l[row_idx][col_idx], expected_l[row_idx][col_idx], abs_tol=tol),
-                       f"L[{row_idx}][{col_idx}] did not have expected value.")
-                expect(math.isclose(u[row_idx][col_idx], expected_u[row_idx][col_idx], abs_tol=tol),
-                       f"U[{row_idx}][{col_idx}] did not have expected value.")
+                expect(math.isclose(l[row_idx,col_idx], expected_l[row_idx][col_idx], abs_tol=tol),
+                       f"L[{row_idx},{col_idx}] did not have expected value.")
+                expect(math.isclose(u[row_idx,col_idx], expected_u[row_idx][col_idx], abs_tol=tol),
+                       f"U[{row_idx},{col_idx}] did not have expected value.")
 
         print(f"hardcoded result {matrix_id} check passed.")
 
@@ -329,9 +329,9 @@ def parilut(rows, cols, pct_nz, seed, hardcoded):
 
     try:
         if hardcoded is not None:
-            A = SparseMatrix.get_hardcode(hardcoded)
+            A = Matrix2DR.get_hardcode(hardcoded)
         else:
-            A = SparseMatrix(rows, cols, pct_nz)
+            A = Matrix2DR(rows, cols, pct_nz)
 
         print("Original matrix")
         print(A)
