@@ -205,25 +205,25 @@ def gemm(rows, cols, pct_nz, seed, repeat):
 
     print(f"Did GEMM using Matrix2DR for {rows}x{cols} {repeat} times in {total} seconds")
 
-    total = 0
-    for _ in range(repeat):
-        a = RMMatrix(rows, cols, pct_nz=pct_nz)
-        b = RMMatrix(rows, cols, pct_nz=pct_nz)
-        t1 = time.time()
-        c = a * b
-        total += (time.time() - t1)
+    # total = 0
+    # for _ in range(repeat):
+    #     a = RMMatrix(rows, cols, pct_nz=pct_nz)
+    #     b = RMMatrix(rows, cols, pct_nz=pct_nz)
+    #     t1 = time.time()
+    #     c = a * b
+    #     total += (time.time() - t1)
 
-    print(f"Did GEMM using RMMatrix  for {rows}x{cols} {repeat} times in {total} seconds")
+    # print(f"Did GEMM using RMMatrix  for {rows}x{cols} {repeat} times in {total} seconds")
 
-    total = 0
-    for _ in range(repeat):
-        a = RMMatrix(rows, cols, pct_nz=pct_nz)
-        b = CMMatrix(rows, cols, pct_nz=pct_nz)
-        t1 = time.time()
-        c = a * b
-        total += (time.time() - t1)
+    # total = 0
+    # for _ in range(repeat):
+    #     a = RMMatrix(rows, cols, pct_nz=pct_nz)
+    #     b = CMMatrix(rows, cols, pct_nz=pct_nz)
+    #     t1 = time.time()
+    #     c = a * b
+    #     total += (time.time() - t1)
 
-    print(f"Did GEMM using Mixed     for {rows}x{cols} {repeat} times in {total} seconds")
+    # print(f"Did GEMM using Mixed     for {rows}x{cols} {repeat} times in {total} seconds")
 
 ###############################################################################
 def parse_command_line(args, description):

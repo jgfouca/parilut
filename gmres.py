@@ -29,9 +29,11 @@ class GMRES(object):
         restarts = 0
 
         n = self._A.nrows()
-        k = self._max_iter # min(n, self._max_iter) # Number of arnoldi steps, what to pick for this?
+        k = min(n, self._max_iter) # Number of arnoldi steps, what to pick for this?
         H = Matrix2DR(k+1, k)
         V = Matrix2DR(n, k+1)
+
+        print(f"Performing GMRES on matrix of size {n} with k={k}")
 
         prev_residual = None
         while restarts < self._restarts and not converged:
@@ -84,6 +86,8 @@ class GMRES(object):
 
                 if self._verbose:
                     print(f"New x is:\n{self._x}")
+            else:
+                print(f"Breakdown was detected on step {j}")
 
             r = self._f - (self._A * self._x)
             print(f"Residual norm is {r.eucl_norm()}")
